@@ -9,8 +9,8 @@
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <Version>0.1.0.0</Version>
-    <FileVersion>0.1.0.0</FileVersion>
+    <!-- A release build gets its version from the tag (dotnet build -p:Version=1.0.0.0); FileVersion follows it -->
+    <Version>1.0.0.0</Version>
     <Product>Observatory Planner</Product>
     <AssemblyTitle>Observatory Planner</AssemblyTitle>
     <Description>SGP-style target planner that runs your observatory every night: starts when safe, images your targets, shuts down when unsafe and resumes.</Description>
@@ -30,9 +30,13 @@
     <AssemblyMetadata Include="License" Value="MPL-2.0" />
     <AssemblyMetadata Include="LicenseURL" Value="https://www.mozilla.org/en-US/MPL/2.0/" />
     <AssemblyMetadata Include="Repository" Value="https://github.com/nikunj3685/nina-observatory-planner" />
-    <AssemblyMetadata Include="Homepage" Value="" />
+    <AssemblyMetadata Include="Homepage" Value="https://github.com/nikunj3685/nina-observatory-planner" />
+    <AssemblyMetadata Include="ChangelogURL" Value="https://github.com/nikunj3685/nina-observatory-planner/blob/main/CHANGELOG.md" />
+    <AssemblyMetadata Include="FeaturedImageURL" Value="https://raw.githubusercontent.com/nikunj3685/nina-observatory-planner/main/docs/images/logo.png" />
+    <AssemblyMetadata Include="ScreenshotURL" Value="https://raw.githubusercontent.com/nikunj3685/nina-observatory-planner/main/docs/images/screenshot-targets.png" />
+    <AssemblyMetadata Include="AltScreenshotURL" Value="https://raw.githubusercontent.com/nikunj3685/nina-observatory-planner/main/docs/images/screenshot-planning-tools.png" />
     <AssemblyMetadata Include="Tags" Value="Sequencer,Automation,Safety,Observatory,Planner" />
-    <AssemblyMetadata Include="LongDescription" Value="Plan targets SGP-style and let NINA run the observatory unattended. Four editable stages (Begin, Start of target, Triggers, End) are plain Advanced Sequencer instruction sets. With a safety monitor it runs every night: it starts when safe, shuts down when unsafe and resumes the same target when safe again." />
+    <AssemblyMetadata Include="LongDescription" Value="Plan targets SGP-style and let N.I.N.A. run the observatory unattended.&#xD;&#xA;&#xD;&#xA;The night has four stages - 1 Begin, 2 Start of each target, 3 While imaging (triggers) and 4 End - and each is a plain Advanced Sequencer instruction set you can edit with any instruction, including ones from other plugins. With a safety monitor it runs every night: it waits for safe, powers up, connects, cools, opens the dome and unparks, images your targets in priority order, and shuts everything down when it turns unsafe or the night is done; when it is safe again it resumes the same target where it stopped. Without a safety monitor it makes one pass through the targets from dusk.&#xD;&#xA;&#xD;&#xA;Also included: start and end by clock time or altitude, Target Settings with Slew now / Center now and a collision warning, a 24-hour planning chart, Pause now / Pause after this frame and Start sequence, Stop with a full shutdown, a wait after safe, gap handling between targets, manual autofocus before the next frame, and per-profile target lists, workflows and options with the last workflow reopened at startup." />
   </ItemGroup>
 
   <ItemGroup>

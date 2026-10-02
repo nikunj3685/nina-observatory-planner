@@ -1,3 +1,5 @@
+<img src="docs/images/logo.png" alt="" width="96" align="right">
+
 # Observatory Planner for N.I.N.A.
 
 A plugin for [N.I.N.A.](https://nighttime-imaging.eu/) 3.2 that runs an observatory unattended, SGP style. You plan targets in a simple panel; the plugin does the rest every night:
@@ -11,6 +13,8 @@ The four stages of the night are ordinary Advanced Sequencer instruction sets yo
 2. **Start of each target** – slew / center, start guiding
 3. **While imaging** – triggers such as dither, autofocus after filter change, meridian flip
 4. **End** – when unsafe or finished (stop guiding, park, close, warm, disconnect, power off)
+
+![The Observatory Planner panel while imaging](docs/images/screenshot-targets.png)
 
 ## Features
 
@@ -27,7 +31,11 @@ The four stages of the night are ordinary Advanced Sequencer instruction sets yo
 - N.I.N.A. 3.2.0.9001 or later (Windows, .NET 8)
 - To build: .NET SDK 8 or later
 
-## Build and install
+## Install
+
+Once it is in N.I.N.A.'s plugin list: Plugins › Available › **Observatory Planner** › Install, then restart N.I.N.A.
+
+## Build and install from source
 
 ```powershell
 dotnet build NINA.ObservatoryPlanner.slnx -c Release
@@ -51,6 +59,10 @@ powershell -File tools\e2e\run_e2e.ps1 -Scenario safety   # also: nosafety, ui, 
 ```
 
 To try the plugin by hand on the simulators: `tools\manual\Start-SimulatorNina.ps1`, and switch the weather with `tools\manual\Set-Safe.ps1 -Safe` / `-Unsafe`.
+
+## Releases
+
+See [CHANGELOG.md](CHANGELOG.md). How a release is built and submitted to N.I.N.A.'s plugin list: [PUBLISHING.md](PUBLISHING.md).
 
 ## License
 

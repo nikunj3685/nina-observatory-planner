@@ -35,6 +35,10 @@ namespace NINA.ObservatoryPlanner.Nina {
 
         /// <summary>Returns true when a test scenario is running (it then decides what happens at startup).</summary>
         public static bool StartIfRequested(PlannerService planner) {
+#if !DEBUG
+            // Release builds (the published plugin) never take test commands
+            return false;
+#else
             var path = Environment.GetEnvironmentVariable(ScenarioVariable);
             if (string.IsNullOrWhiteSpace(path)) { return false; }
             _ = Task.Run(async () => {
@@ -47,6 +51,7 @@ namespace NINA.ObservatoryPlanner.Nina {
                 }
             });
             return true;
+#endif
         }
 
         private static async Task Run(PlannerService planner, string path) {
