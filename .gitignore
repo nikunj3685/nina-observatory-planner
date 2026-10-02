@@ -1,0 +1,7 @@
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+tools/e2e/out/
+tools/e2e/__pycache__/

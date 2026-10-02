@@ -1,0 +1,121 @@
+<Window
+    x:Class="NINA.ObservatoryPlanner.UI.Dialogs.PlanningToolsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="clr-namespace:NINA.ObservatoryPlanner.UI.Dialogs"
+    Title="Planning tools"
+    Width="1060"
+    Height="640"
+    MinWidth="700"
+    MinHeight="480"
+    Background="{DynamicResource BackgroundBrush}"
+    Foreground="{DynamicResource PrimaryBrush}"
+    ShowInTaskbar="False"
+    WindowStartupLocation="CenterOwner"
+    WindowStyle="ToolWindow">
+    <Window.Resources>
+        <Style x:Key="Box" TargetType="Border">
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="10" />
+        </Style>
+        <Style x:Key="Cell" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource BackgroundBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="Margin" Value="3" />
+        </Style>
+        <Style x:Key="ColHead" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}" />
+            <Setter Property="Opacity" Value="0.65" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+        <Border Padding="16,10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" DockPanel.Dock="Bottom">
+            <DockPanel>
+                <Button MinWidth="84" Click="Ok_Click" Content="OK" DockPanel.Dock="Right" IsCancel="True" IsDefault="True" Style="{DynamicResource OP_Primary}" />
+                <TextBlock x:Name="siteLine" VerticalAlignment="Center" FontSize="12" Opacity="0.65" TextWrapping="Wrap" />
+            </DockPanel>
+        </Border>
+        <Grid Margin="14">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="330" />
+            </Grid.ColumnDefinitions>
+
+            <Border Margin="0,0,12,12" Padding="0" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6">
+                <local:AltitudeChart x:Name="chart" />
+            </Border>
+
+            <StackPanel Grid.Column="1">
+                <Border Margin="0,0,0,10" Style="{StaticResource Box}">
+                    <StackPanel>
+                        <StackPanel Margin="0,0,0,6" Orientation="Horizontal">
+                            <Border Width="26" Margin="0,0,8,0" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4"><TextBlock HorizontalAlignment="Center" FontFamily="Consolas" FontSize="11" Text="L" /></Border>
+                            <TextBlock><Run Foreground="#57B97C" Text="Left click" /><Run Text=" sets the start time" /></TextBlock>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="26" Margin="0,0,8,0" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4"><TextBlock HorizontalAlignment="Center" FontFamily="Consolas" FontSize="11" Text="R" /></Border>
+                            <TextBlock><Run Foreground="#E0645C" Text="Right click" /><Run Text=" sets the end time" /></TextBlock>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Box}">
+                    <StackPanel>
+                        <CheckBox x:Name="hideDay" Margin="0,2" Click="Option_Click" Content="Hide day / night" Style="{DynamicResource OP_Check}" />
+                        <CheckBox x:Name="hideNow" Margin="0,2" Click="Option_Click" Content="Hide &quot;now&quot; marker" Style="{DynamicResource OP_Check}" />
+                        <CheckBox x:Name="hideBlock" Margin="0,2" Click="Option_Click" Content="Hide capturing block" Style="{DynamicResource OP_Check}" />
+                        <StackPanel Margin="0,6,0,0" Orientation="Horizontal">
+                            <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Text="Horizon" />
+                            <TextBox x:Name="horizon" Width="64" Text="5" TextChanged="Horizon_Changed" />
+                            <TextBlock Margin="4,0,0,0" VerticalAlignment="Center" Text="°" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <Border Grid.Row="1" Margin="0,0,12,0" Style="{StaticResource Box}">
+                <Grid x:Name="readouts">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Column="1" Style="{StaticResource ColHead}" Text="TIME" />
+                    <TextBlock Grid.Column="2" Style="{StaticResource ColHead}" Text="DATE" />
+                    <TextBlock Grid.Column="3" Style="{StaticResource ColHead}" Text="ALTITUDE" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource Box}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="sunText" FontFamily="Consolas" FontSize="12" LineHeight="18" />
+                    <local:MoonDisc x:Name="moon" Grid.Column="1" Width="54" Height="54" Margin="6,0" VerticalAlignment="Center" />
+                    <TextBlock x:Name="moonText" Grid.Column="2" FontFamily="Consolas" FontSize="12" LineHeight="18" />
+                </Grid>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

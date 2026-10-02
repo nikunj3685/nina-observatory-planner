@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- NINA 3.2 runs on .NET 8 -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>NINA.ObservatoryPlanner</AssemblyName>
+    <RootNamespace>NINA.ObservatoryPlanner</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Version>0.1.0.0</Version>
+    <FileVersion>0.1.0.0</FileVersion>
+    <Product>Observatory Planner</Product>
+    <AssemblyTitle>Observatory Planner</AssemblyTitle>
+    <Description>SGP-style target planner that runs your observatory every night: starts when safe, images your targets, shuts down when unsafe and resumes.</Description>
+    <Company>Nikunj Patel</Company>
+    <Copyright>Copyright © 2026 Nikunj Patel</Copyright>
+    <!-- NINA's own assemblies are already loaded by NINA; only the plugin DLL is deployed -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NINA.Plugin" Version="3.2.0.9001" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Plugin manifest values NINA reads from the assembly (see NINA.Plugin.PluginBase) -->
+    <AssemblyMetadata Include="MinimumApplicationVersion" Value="3.2.0.9001" />
+    <AssemblyMetadata Include="License" Value="MPL-2.0" />
+    <AssemblyMetadata Include="LicenseURL" Value="https://www.mozilla.org/en-US/MPL/2.0/" />
+    <AssemblyMetadata Include="Repository" Value="https://github.com/nikunj3685/nina-observatory-planner" />
+    <AssemblyMetadata Include="Homepage" Value="" />
+    <AssemblyMetadata Include="Tags" Value="Sequencer,Automation,Safety,Observatory,Planner" />
+    <AssemblyMetadata Include="LongDescription" Value="Plan targets SGP-style and let NINA run the observatory unattended. Four editable stages (Begin, Start of target, Triggers, End) are plain Advanced Sequencer instruction sets. With a safety monitor it runs every night: it starts when safe, shuts down when unsafe and resumes the same target when safe again." />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="NINA.ObservatoryPlanner.Tests" />
+  </ItemGroup>
+
+</Project>

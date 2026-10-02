@@ -1,0 +1,123 @@
+<Window
+    x:Class="NINA.ObservatoryPlanner.UI.Dialogs.TargetSettingsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="{Binding Title}"
+    Width="520"
+    Background="{DynamicResource BackgroundBrush}"
+    Foreground="{DynamicResource PrimaryBrush}"
+    ResizeMode="NoResize"
+    ShowInTaskbar="False"
+    SizeToContent="Height"
+    WindowStartupLocation="CenterOwner"
+    WindowStyle="ToolWindow">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <Style x:Key="Section" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontStyle" Value="Italic" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,14,0,6" />
+        </Style>
+        <Style x:Key="Muted" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}" />
+            <Setter Property="Opacity" Value="0.7" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+        <Border Padding="16,10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" DockPanel.Dock="Bottom">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button MinWidth="84" Margin="8,0,0,0" Click="Ok_Click" Content="OK" IsDefault="True" Style="{DynamicResource OP_Primary}" />
+                    <Button MinWidth="84" Margin="8,0,0,0" Content="Cancel" IsCancel="True" Style="{DynamicResource OP_Btn}" />
+                </StackPanel>
+                <TextBlock x:Name="error" VerticalAlignment="Center" Foreground="#E0645C" TextWrapping="Wrap" />
+            </DockPanel>
+        </Border>
+        <StackPanel Margin="16,8,16,12">
+            <Grid Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="56" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Muted}" Text="Name" />
+                <TextBox x:Name="nameBox" Grid.Column="1" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+            </Grid>
+
+            <TextBlock Style="{StaticResource Section}" Text="Location (J2000)" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="56" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Style="{StaticResource Muted}" Text="RA" />
+                <TextBox Grid.Column="1" Margin="0,2" FontFamily="Consolas" Text="{Binding RaText, UpdateSourceTrigger=PropertyChanged}" />
+                <Button Grid.Column="2" MinWidth="104" Margin="8,2,0,2" Command="{Binding SlewNowCommand}" Content="Slew now" Style="{DynamicResource OP_Small}" />
+                <TextBlock Grid.Row="1" Style="{StaticResource Muted}" Text="Dec" />
+                <TextBox Grid.Row="1" Grid.Column="1" Margin="0,2" FontFamily="Consolas" Text="{Binding DecText, UpdateSourceTrigger=PropertyChanged}" />
+                <Button Grid.Row="1" Grid.Column="2" MinWidth="104" Margin="8,2,0,2" Command="{Binding CenterNowCommand}" Content="Center now" Style="{DynamicResource OP_Small}" />
+            </Grid>
+            <TextBlock Margin="0,2,0,0" FontSize="12" Foreground="#E0645C" Text="{Binding CoordinateError}" TextWrapping="Wrap" />
+            <StackPanel Margin="0,6,0,0" Orientation="Horizontal">
+                <TextBlock Margin="0,0,10,0" Style="{StaticResource Muted}" Text="Get from:" />
+                <Button Margin="0,0,14,0" Command="{Binding FromFramingCommand}" Content="Framing Assistant" Style="{DynamicResource OP_Link}" />
+                <Button Command="{Binding FromPlanetariumCommand}" Content="Planetarium" Style="{DynamicResource OP_Link}" />
+            </StackPanel>
+            <Grid Margin="0,10,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Margin="0,2,14,0" VerticalAlignment="Top" Style="{StaticResource Muted}" Text="When target starts" />
+                <StackPanel Grid.Column="1">
+                    <RadioButton Content="Slew to and then center on location" GroupName="OnStart" IsChecked="{Binding CenterOnStart}" Style="{DynamicResource OP_Radio}" />
+                    <RadioButton Content="Slew to location" GroupName="OnStart" IsChecked="{Binding SlewOnStart}" Style="{DynamicResource OP_Radio}" />
+                    <RadioButton Content="Do not move to location" GroupName="OnStart" IsChecked="{Binding StayOnStart}" Style="{DynamicResource OP_Radio}" />
+                </StackPanel>
+            </Grid>
+
+            <TextBlock Style="{StaticResource Section}" Text="Time constraints" />
+            <ItemsControl x:Name="constraints">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Margin="0,3">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="92" />
+                                <ColumnDefinition Width="64" />
+                                <ColumnDefinition Width="22" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="92" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Content="{Binding Label}" IsChecked="{Binding Enabled}" Style="{DynamicResource OP_Check}" />
+                            <TextBox Grid.Column="1" IsEnabled="{Binding AltitudeEditable}" Text="{Binding AltitudeText, UpdateSourceTrigger=LostFocus}" />
+                            <TextBlock Grid.Column="2" Margin="4,0" VerticalAlignment="Center" Opacity="0.7" Text="°" />
+                            <Button Grid.Column="3" MinWidth="70" Margin="0,0,6,0" Command="{Binding Toggle}" Content="{Binding ToggleText}" IsEnabled="{Binding Enabled}" Style="{DynamicResource OP_Small}" ToolTip="{Binding ToggleTip}" />
+                            <TextBox Grid.Column="4" IsEnabled="{Binding TimeEditable}" Text="{Binding TimeText, UpdateSourceTrigger=LostFocus}" ToolTip="Local time, e.g. 23:40" />
+                            <TextBlock Grid.Column="5" Margin="8,0,0,0" VerticalAlignment="Center" Opacity="0.7" Text="{Binding Note}" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Button Margin="0,6,0,0" HorizontalAlignment="Left" Click="Planning_Click" Content="📈 Planning tools" Style="{DynamicResource OP_Link}" />
+            <TextBlock Margin="0,6,0,0" FontSize="12" Opacity="0.65" Text="No start: begins as soon as it is safe and this target is next. No end: runs until unsafe or all exposures are done. The ° alt / 🕑 time button picks which value is used." TextWrapping="Wrap" />
+
+            <TextBlock Style="{StaticResource Section}" Text="Other" />
+            <StackPanel Orientation="Horizontal">
+                <CheckBox Content="Rotate camera to" IsChecked="{Binding Rotate}" Style="{DynamicResource OP_Check}" />
+                <TextBox Width="84" Margin="10,0,4,0" IsEnabled="{Binding Rotate}" Text="{Binding AngleText, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Style="{StaticResource Muted}" Text="°" />
+            </StackPanel>
+            <TextBlock Margin="0,4,0,0" FontSize="12" Opacity="0.65" Text="{Binding RotateHint}" TextWrapping="Wrap" />
+
+            <TextBlock Margin="0,10,0,0" FontSize="12" Foreground="#6AA7D8" Text="{Binding Status}" TextWrapping="Wrap" />
+        </StackPanel>
+    </DockPanel>
+</Window>
