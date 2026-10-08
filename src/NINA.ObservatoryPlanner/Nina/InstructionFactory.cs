@@ -167,11 +167,19 @@ namespace NINA.ObservatoryPlanner.Nina {
         public TakeExposure TakeExposure(PlannerExposure e) {
             var i = Item(new TakeExposure(s.Profile, s.Camera, s.Imaging, s.ImageSave, s.ImageHistory), "Imaging_TakeExposure", "CameraSVG", "Camera");
             i.ExposureTime = e.ExposureTime;
-            i.Gain = e.Gain;
-            i.ImageType = CaptureSequence.ImageTypes.LIGHT;
+            // gain and offset stay at -1: the camera's own setting (NINA's camera settings or the driver default) is used
+            i.ImageType = ImageTypeOf(e.Type);
             i.Binning = ParseBinning(e.Binning);
             return i;
         }
+
+        /// <summary>NINA's image type for a row. NINA 3 saves dark flats as DARK (it migrates the old DARKFLAT type to DARK).</summary>
+        public static string ImageTypeOf(ExposureType type) => type switch {
+            ExposureType.Dark or ExposureType.DarkFlat => CaptureSequence.ImageTypes.DARK,
+            ExposureType.Bias => CaptureSequence.ImageTypes.BIAS,
+            ExposureType.Flat => CaptureSequence.ImageTypes.FLAT,
+            _ => CaptureSequence.ImageTypes.LIGHT
+        };
 
         public static BinningMode ParseBinning(string text) {
             var parts = (text ?? "1x1").ToLowerInvariant().Split('x');

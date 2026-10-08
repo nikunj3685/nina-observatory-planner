@@ -73,8 +73,10 @@ namespace NINA.ObservatoryPlanner.Nina {
                 planner.Options.GapMinutes = o.GapMinutes;
                 planner.Options.GapMount = o.GapMount;
                 planner.Options.GapCloseDome = o.GapCloseDome;
-                planner.Options.GapLeadMinutes = o.GapLeadMinutes;
                 planner.Options.SafeDelaySeconds = o.SafeDelaySeconds;
+                planner.Options.AutofocusAfterBegin = o.AutofocusAfterBegin;
+                planner.Options.CloseGuiderAppOnDisconnect = o.CloseGuiderAppOnDisconnect;
+                planner.Options.CloseMountAppOnDisconnect = o.CloseMountAppOnDisconnect;
                 planner.Options.DarkSunAltitude = o.DarkSunAltitude;
                 planner.Options.KeepConnected.Clear();
                 foreach (var d in o.KeepConnected) { planner.Options.KeepConnected.Add(d); }

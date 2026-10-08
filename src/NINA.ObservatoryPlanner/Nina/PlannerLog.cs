@@ -33,6 +33,8 @@ namespace NINA.ObservatoryPlanner.Nina {
             Write(new { kind = "phase", phase = phase.ToString(), message, target = target?.Name });
         }
 
+        public void Status(string message) => service?.SetStatus(message);
+
         public void Info(string message) {
             Logger.Info($"Observatory Planner: {message}");
             Write(new { kind = "info", message });

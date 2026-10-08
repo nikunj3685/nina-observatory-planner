@@ -1,7 +1,9 @@
 using FluentAssertions;
 using NINA.ObservatoryPlanner.Nina;
+using NINA.Sequencer.Trigger;
 using NUnit.Framework;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.ComponentModel.Composition.Hosting;
 using System.IO;
@@ -32,6 +34,25 @@ namespace NINA.ObservatoryPlanner.Tests {
 
                 first.Should().NotBeNull();
                 second.Should().BeSameAs(first);
+            } finally {
+                Environment.SetEnvironmentVariable("OBSERVATORY_PLANNER_ROOT", previous);
+                try { Directory.Delete(root, true); } catch (IOException) { }
+            }
+        }
+
+        [Test]
+        public void The_planner_autofocus_trigger_is_exported_with_the_shared_planner() {
+            var root = Path.Combine(Path.GetTempPath(), "op-composition-" + Guid.NewGuid().ToString("N"));
+            var previous = Environment.GetEnvironmentVariable("OBSERVATORY_PLANNER_ROOT");
+            Environment.SetEnvironmentVariable("OBSERVATORY_PLANNER_ROOT", root);
+            try {
+                var nina = (NinaServices)RuntimeHelpers.GetUninitializedObject(typeof(NinaServices));
+                var container = new CompositionContainer(new TypeCatalog(typeof(PlannerServiceExport), typeof(PlannerAutofocusOnFilterChange)));
+                container.ComposeExportedValue(nina);
+                var export = container.GetExports<ISequenceTrigger, IDictionary<string, object>>().Should().ContainSingle().Subject;
+                export.Metadata["Name"].Should().Be(PlannerAutofocusOnFilterChange.DisplayName);
+                export.Metadata["Category"].Should().Be("Observatory Planner");
+                export.Value.Should().BeOfType<PlannerAutofocusOnFilterChange>();
             } finally {
                 Environment.SetEnvironmentVariable("OBSERVATORY_PLANNER_ROOT", previous);
                 try { Directory.Delete(root, true); } catch (IOException) { }

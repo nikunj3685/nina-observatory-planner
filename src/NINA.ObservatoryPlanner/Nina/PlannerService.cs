@@ -54,6 +54,10 @@ namespace NINA.ObservatoryPlanner.Nina {
             Log = new PlannerLog(Path.Combine(BaseRoot, "Logs"), this);
             Factory = nina != null ? new InstructionFactory(nina) : null;
             Workflows = new WorkflowFiles(this);
+            GuideStarLost = ReadGuideStarLost;
+            GuidingError = () => guideErrors.Total(DateTime.Now);
+            if (nina?.Guider != null) { WatchGuideSteps(); }
+            if (nina?.Guider != null && nina.Telescope != null && nina.Profile != null) { WatchDisconnects(); }
             LoadListAndState();
             if (nina?.Profile != null) { nina.Profile.ProfileChanged += (_, _) => Ui.Run(SwitchProfile); }
         }
@@ -120,6 +124,16 @@ namespace NINA.ObservatoryPlanner.Nina {
         /// <summary>True while frames of the current target are being taken (after 2 Start of target has run).</summary>
         public bool IsTakingFrames { get => isTakingFrames; private set => Set(ref isTakingFrames, value); }
 
+        private string endProblems;
+        /// <summary>The 4 End steps that failed the last time it ran (shown in the panel until 4 End runs again), or null.</summary>
+        public string EndProblems { get => endProblems; private set => Set(ref endProblems, value); }
+        internal void SetEndProblems(string text) => EndProblems = text;
+        /// <summary>Adds a problem to the note shown under the status bar (kept until 4 End runs again).</summary>
+        internal void AddEndProblem(string text) => EndProblems = EndProblems == null ? text : EndProblems + " " + text;
+
+        /// <summary>The filter of the last light frame (kept across targets, pauses and weather stops), or null.</summary>
+        public string LastLightFilter { get; private set; }
+
         /// <summary>Set by the panel: shows it (used by the test hook).</summary>
         public Action ShowPanelRequested { get; set; }
         /// <summary>Set by the panel: selects one of its tabs (used by the test hook).</summary>
@@ -165,10 +179,20 @@ namespace NINA.ObservatoryPlanner.Nina {
         public void RequestPause(PauseKind kind) {
             var e = engine;
             if (!IsRunning || e == null) { return; }
-            e.RequestPause(kind == PauseKind.Now && IsTakingFrames ? PauseKind.Now : PauseKind.AfterFrame);
-            StatusText = kind == PauseKind.Now && IsTakingFrames ? "Pausing now…" : "Pausing after the current frame…";
+            if (e.InEnd) { Log.Info("Pause ignored: 4 End is running and always runs to the end"); return; }
+            if (!e.PauseAllowed) { Log.Info("Pause ignored: nothing runs yet (waiting for safe or for the next night); use Stop instead"); return; }
+            e.RequestPause(kind);
+            if (e.PausePending) {
+                StatusText = kind == PauseKind.Now ? "Pausing now… (a meridian flip, the dome shutter or park finishes first)" : "Pausing after this step…";
+            }
             Raise(nameof(PausePending));
         }
+
+        /// <summary>Pause is possible: the run has started 1 Begin and 4 End is not running.</summary>
+        public bool PauseAllowed => IsRunning && engine?.PauseAllowed == true;
+
+        /// <summary>The target whose imaging has begun (2 Start of target ran to its end), or null.</summary>
+        internal Guid? ImagingTargetId { get; set; }
 
         public void CancelPause() {
             engine?.CancelPause();
@@ -255,7 +279,8 @@ namespace NINA.ObservatoryPlanner.Nina {
             for (var i = 0; i < 120 && !Nina.Sequence.Initialized; i++) { await Task.Delay(1000); }
             if (!Nina.Sequence.Initialized) { return; }
             await RestoreWorkflowAsync();
-            await Ui.Run(() => { var block = Workflows.FindBlock(out _); if (block != null) { Register(block); } });
+            var found = await Ui.Run(() => { var block = Workflows.FindBlock(out _); if (block != null) { Register(block); } return block != null; });
+            if (found) { await ShowAdvancedSequencerAsync(); }
             if (IsPaused) {
                 Log.Info($"NINA started while the sequence was paused{(PausePoint?.TargetName != null ? " on " + PausePoint.TargetName : "")}: still paused");
                 SetPhase(PlannerPhase.Paused, "Paused (since before NINA was restarted). Press Start sequence to continue", null);
@@ -267,6 +292,18 @@ namespace NINA.ObservatoryPlanner.Nina {
                 await Task.Delay(TimeSpan.FromSeconds(5));
                 if (!IsRunning) { await Ui.Run(() => StartRun(StartKind.Normal)); }
             }
+        }
+
+        /// <summary>
+        /// NINA's Sequencer tab opens on its overview page (unless the simple sequencer is turned off), so the restored
+        /// workflow would only show after "Edit in Advanced Sequencer". NINA picks that page just after its sequencer
+        /// reports ready, so wait a moment before switching.
+        /// </summary>
+        private async Task ShowAdvancedSequencerAsync() {
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            await Ui.Run(() => {
+                try { Nina.Sequence.SwitchToAdvancedView(); } catch (Exception ex) { Logger.Error(ex); }
+            });
         }
 
         /// <summary>Puts this profile's last workflow into the Advanced Sequencer when the open sequence has no planner block.</summary>
@@ -308,9 +345,10 @@ namespace NINA.ObservatoryPlanner.Nina {
             PauseNote = null;
             IsRunning = true;
             Log.StartRun(Options);
+            var hardware = new NinaPlannerHardware(container, this, progress);
             var e = new PlannerEngine(Options, new TargetSelector(Site, Options),
                 () => Ui.Run(() => Targets.ToList()).GetAwaiter().GetResult(),
-                new NinaPlannerHardware(container, this, progress), new NinaSafetySource(Nina), new SystemClock(), Log);
+                hardware, new NinaSafetySource(Nina), new SystemClock(), Log);
             engine = e;
             if (start != StartKind.Normal) { Log.Info($"Run starts as: {start}"); }
             try {
@@ -326,6 +364,8 @@ namespace NINA.ObservatoryPlanner.Nina {
                     PausePoint = null;
                     SavePauseState();
                 }
+            } catch (OperationCanceledException) when (token.IsCancellationRequested && hardware.ErrorStop != null) {
+                await EndAfterErrorStop(hardware, hardware.ErrorStop);
             } catch (OperationCanceledException) when (token.IsCancellationRequested) {
                 // NINA's own Stop button: stops at once, without 4 End (the planner's Stop runs 4 End)
                 Log.Phase(PlannerPhase.Stopped, "Stopped from NINA's sequencer (4 End did not run)");
@@ -340,6 +380,30 @@ namespace NINA.ObservatoryPlanner.Nina {
                 Raise(nameof(PausePending));
             }
         }
+
+        /// <summary>
+        /// An instruction failed with the error behaviour "Skip to end of sequence instructions" or "Abort", which stops
+        /// NINA's whole sequence. For the planner that means: run 4 End (unless it was 4 End that failed) and stop, so the
+        /// observatory is never left open and powered.
+        /// </summary>
+        private async Task EndAfterErrorStop(NinaPlannerHardware hardware, ErrorStop stop) {
+            Log.Info($"\"{stop.Item}\" failed in {stop.Where}; its error behaviour \"{stop.BehaviorText}\" stopped NINA's sequence");
+            if (!stop.InEnd) {
+                Log.Phase(PlannerPhase.End, $"4 End (\"{stop.Item}\" failed)");
+                // NINA's sequence is already cancelled, so 4 End runs on its own token
+                try { await hardware.RunStage(StageKind.End, CancellationToken.None); } catch (Exception ex) {
+                    Logger.Error(ex);
+                    Log.Info($"4 End failed: {ex.Message}");
+                }
+            }
+            IsPaused = false;
+            PausePoint = null;
+            SavePauseState();
+            Log.Phase(PlannerPhase.Stopped, $"Stopped: \"{stop.Item}\" failed in {stop.Where} and its error behaviour is \"{stop.BehaviorText}\". "
+                + (stop.InEnd ? "Check 4 End and the equipment." : "4 End has run.") + " Fix the problem and press Run again.");
+        }
+
+        internal void SetStatus(string message) => StatusText = message;
 
         /// <summary>The running engine's check before each frame: false when a pause or stop is due.</summary>
         internal bool FrameAllowed => engine?.FrameAllowed() ?? true;
@@ -363,10 +427,124 @@ namespace NINA.ObservatoryPlanner.Nina {
             return taken;
         }
 
+        // ---------- guide star lost ----------
+        private bool guideStarGaveUp;
+
+        /// <summary>True while the guider reports the guide star lost (PHD2's "LostLock"). False without a guider or for other guiders.</summary>
+        internal Func<bool> GuideStarLost { get; set; }
+
+        private bool ReadGuideStarLost() {
+            try {
+                if (Nina?.Guider?.GetInfo()?.Connected != true) { return false; }
+                return Nina.Guider.GetDevice() is NINA.Equipment.Interfaces.IGuider g && g.State == "LostLock";
+            } catch (Exception) { return false; }
+        }
+
+        private readonly GuideErrorWindow guideErrors = new();
+
+        private void WatchGuideSteps() {
+            try {
+                Nina.Guider.GuideEvent += (_, step) => { if (step != null) { guideErrors.Add(DateTime.Now, step.RADistanceRaw, step.DECDistanceRaw); } };
+                Nina.Guider.AfterDither += (_, _) => { guideErrors.Clear(); return Task.CompletedTask; };
+                Nina.Guider.GuidingStarted += (_, _) => { guideErrors.Clear(); return Task.CompletedTask; };
+            } catch (Exception ex) { Logger.Error(ex); }
+        }
+
+        /// <summary>
+        /// ⚙ Options "Close PHD2" / "Close the mount software": hooked into NINA's own guider and mount disconnects, so they
+        /// work with Disconnect Equipment and Disconnect All wherever those are. NINA waits for the handlers to finish.
+        /// </summary>
+        private void WatchDisconnects() {
+            try {
+                var closer = new DisconnectCloser(Options, SequenceRunning,
+                    () => (Nina.Profile.ActiveProfile.GuiderSettings.GuiderName ?? "").StartsWith("PHD2", StringComparison.OrdinalIgnoreCase),
+                    () => Nina.Guider.GetInfo()?.Connected == true, () => Nina.Guider.Disconnect(),
+                    new Phd2Client(() => (Nina.Profile.ActiveProfile.GuiderSettings.PHD2ServerUrl, Nina.Profile.ActiveProfile.GuiderSettings.PHD2ServerPort)),
+                    () => AscomDriverProgram.ExeFor(Nina.Profile.ActiveProfile.TelescopeSettings.Id), AscomDriverProgram.IsRunning,
+                    (d, t) => Task.Delay(d, t), m => Log.Info(m), m => { Log.Info(m); Logger.Warning("Observatory Planner: " + m); AddEndProblem(m); });
+                Nina.Guider.Disconnected += (_, _) => closer.OnGuiderDisconnected();
+                Nina.Telescope.Disconnected += (_, _) => closer.OnMountDisconnected();
+            } catch (Exception ex) { Logger.Error(ex); }
+        }
+
+        /// <summary>NINA's Advanced Sequencer is running (the planner, or anything else in the sequence).</summary>
+        private bool SequenceRunning() {
+            try { return IsRunning || Nina.Sequence.IsAdvancedSequenceRunning(); } catch (Exception) { return IsRunning; }
+        }
+
+        /// <summary>The guiding error of the last 10 guide steps in guide camera pixels, or null when unknown.</summary>
+        internal Func<double?> GuidingError { get; set; }
+
+        /// <summary>True when the guiding check is on and the guiding error is known and above the limit.</summary>
+        internal bool GuidingErrorAbove() => Options.GuidingCheck && GuidingError() is double e && e > Options.GuidingLimitPixels;
+
+        /// <summary>PHD2's pixel scale (arcseconds per guide camera pixel), or null when the guider is not connected.</summary>
+        public double? GuiderPixelScale {
+            get {
+                try {
+                    var info = Nina?.Guider?.GetInfo();
+                    return info?.Connected == true && info.PixelScale > 0 ? info.PixelScale : null;
+                } catch (Exception) { return null; }
+            }
+        }
+
+        /// <summary>The imaging loop gave up waiting for the guide star.</summary>
+        internal void GaveUpOnGuideStar() => guideStarGaveUp = true;
+
+        /// <summary>Takes the "gave up on the guide star" note, if any (the target run then reports it to the engine).</summary>
+        internal bool TakeGuideStarGaveUp() {
+            var v = guideStarGaveUp;
+            guideStarGaveUp = false;
+            return v;
+        }
+
+        // ---------- autofocus: after 1 Begin and when the filter changes ----------
+        private bool focusAfterBeginDue;
+        private PlannerExposure nextFrame;
+        private bool focusedForNextFrame;
+
+        /// <summary>1 Begin is starting: the equipment was off, so the focus has to be found again.</summary>
+        internal void OnBeginStarting() => focusAfterBeginDue = true;
+
+        /// <summary>4 End is starting: the next imaging always comes after 1 Begin again.</summary>
+        internal void OnEndStarting() => focusAfterBeginDue = false;
+
+        /// <summary>The imaging loop is about to take this frame (its filter is set; triggers come next).</summary>
+        internal void PrepareFrame(PlannerExposure e) {
+            nextFrame = e;
+            focusedForNextFrame = false;
+        }
+
+        /// <summary>True once, for the first light frame after 1 Begin, when "Autofocus before the first frame after 1 Begin" is on.</summary>
+        internal bool TakeFocusAfterBegin(PlannerExposure e) {
+            if (e.Type != ExposureType.Light || !focusAfterBeginDue) { return false; }
+            focusAfterBeginDue = false;
+            return Options.AutofocusAfterBegin;
+        }
+
+        /// <summary>An autofocus ran for the frame about to be taken: the filter-change trigger doesn't run it again.</summary>
+        internal void MarkFocused() => focusedForNextFrame = true;
+
+        /// <summary>
+        /// For "AF after filter change (planner)": the next frame is a light frame with another filter than the last light
+        /// frame (across targets, pauses and weather stops), and no autofocus ran for it yet.
+        /// </summary>
+        internal bool FilterChangeNeedsFocus() =>
+            nextFrame is { Type: ExposureType.Light } f && !focusedForNextFrame && LastLightFilter != null
+            && !string.Equals(f.Filter, LastLightFilter, StringComparison.OrdinalIgnoreCase);
+
         public void OnFrameStarting(PlannerTarget target, PlannerExposure e) {
             StatusText = $"Imaging {target.Name} · {e.Filter} {e.ExposureTime:0.#} s · frame {e.Done + 1} of {e.Count}";
-            Log.Info($"Frame starting: {target.Name} {e.Filter} {e.ExposureTime:0.#} s");
+            Log.Info($"Frame starting: {target.Name} {e.Filter} {e.ExposureTime:0.#} s{(e.Type == ExposureType.Light ? "" : " " + e.Type)}");
             IsTakingFrames = true;
+            if (e.Type == ExposureType.Light) { LastLightFilter = e.Filter; }
+            foreach (var x in target.Exposures) { x.IsActive = ReferenceEquals(x, e); }
+        }
+
+        /// <summary>The imaging of a target stopped (done, window closed, pause, weather): no row is active any more.</summary>
+        public void OnImagingEnded(PlannerTarget target) {
+            nextFrame = null;
+            foreach (var x in target.Exposures) { x.IsActive = false; }
         }
 
         /// <summary>Progress is saved after every frame so it survives clouds, dawn and NINA restarts.</summary>

@@ -116,7 +116,7 @@ $raA = ($lstHours + 3) % 24
 $raB = ($lstHours + 3.3) % 24
 $now = Get-Date
 
-function Exposure($filter, $seconds, $count) { [ordered]@{ Id = [guid]::NewGuid(); Enabled = $true; Filter = $filter; ExposureTime = $seconds; Gain = -1; Binning = "1x1"; Count = $count; Done = 0 } }
+function Exposure($filter, $seconds, $count) { [ordered]@{ Id = [guid]::NewGuid(); Enabled = $true; Filter = $filter; ExposureTime = $seconds; Binning = "1x1"; Count = $count; Done = 0 } }
 function Target($name, $ra, $dec, $order, $exposures, $start = $null) {
     $t = [ordered]@{ Id = [guid]::NewGuid(); Enabled = $true; Name = $name; RaHours = $ra; DecDegrees = $dec; OnStart = "SlewOnly"; Rotate = $false; PositionAngle = 0
         Start = [ordered]@{ Enabled = $false; By = "Altitude"; Altitude = 0; Time = "22:00:00" }
@@ -185,8 +185,8 @@ $list | ConvertTo-Json -Depth 6 | Set-Content $listPath -Encoding utf8
 $scenarioPath = Join-Path $run "scenario.json"
 [ordered]@{
     Workflow = $workflow; TargetList = $listPath; Fast = $true; AutoStart = ($Scenario -ne "ui")
-    RemoveTriggers = @("AutofocusAfterFilterChange")   # simulated images have no stars to focus on
-    Options = [ordered]@{ RunMode = $mode; GapMinutes = 1; GapMount = "StopTrackingAndPark"; GapCloseDome = $true; GapLeadMinutes = 1; DarkSunAltitude = 90   # simulators: daylight counts as dark, so the test runs at any hour
+    RemoveTriggers = @("AutofocusAfterFilterChange", "PlannerAutofocusOnFilterChange")   # simulated images have no stars to focus on
+    Options = [ordered]@{ RunMode = $mode; GapMinutes = 1; GapMount = "StopTrackingAndPark"; GapCloseDome = $true; AutofocusAfterBegin = $false; CloseGuiderAppOnDisconnect = $false; CloseMountAppOnDisconnect = $false; DarkSunAltitude = 90   # simulators: daylight counts as dark, so the test runs at any hour
                           SafeDelaySeconds = $(if ($Scenario -eq "negative") { 20 } else { 0 })
                           KeepConnected = @("Safety Monitor", "Switch", "Dome") }
 } | ConvertTo-Json -Depth 5 | Set-Content $scenarioPath -Encoding utf8

@@ -119,11 +119,13 @@ namespace NINA.ObservatoryPlanner.Tests {
             vm.SelectedTarget.Should().NotBeNull();
             vm.TargetChips.Should().Contain("ends at 30° altitude");
             vm.NextTarget.Should().BeSameAs(planner.Targets[0]);
-            foreach (var tab in new[] { 0, 1, 2 }) {
+            foreach (var tab in new[] { 0, 1, 2, 3 }) {
                 vm.SelectedPlannerTab = tab;
                 ShowAndClose(w);
                 w = new Window { Content = new ContentControl { Content = vm, ContentTemplate = template }, Width = 1200, Height = 900 };
             }
+            vm.GoInfoCommand.Execute(null);
+            vm.SelectedPlannerTab.Should().Be(3, "the ! next to the gear opens Info");
             vm.Stages.Should().OnlyContain(s => s.EmptyText != null, "no workflow is loaded without NINA");
         }
     }

@@ -57,22 +57,32 @@ namespace NINA.ObservatoryPlanner.UI {
         public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) => null;
     }
 
+    /// <summary>Which target the run is imaging now, and which one it is paused on (for the target list).</summary>
+    public sealed record TargetListState(Guid? Imaging, Guid? Paused);
+
     /// <summary>
-    /// Status of a row in the target list, as in the mockup: ✔ complete, ‖ unchecked, ▶ next, ◷ queued.
-    /// Values: the target, the next target, Enabled, IsComplete (the last two only make the binding update).
-    /// Parameter "brush" returns the icon colour instead of the icon.
+    /// Status of a row in the target list: ▶ Imaging (the run is on it now), ‖ Paused (checked, not being imaged; orange when
+    /// the run is paused on it), ■ Stopped (unchecked, or nothing to take), ✔ Complete. The parameter "brush" gives the
+    /// colour, "tip" the tooltip text, otherwise the icon.
     /// </summary>
     public sealed class TargetStateConverter : IMultiValueConverter {
+        public static (string Icon, string Brush, string Tip) StateOf(Core.PlannerTarget t, TargetListState state) {
+            if (t == null) { return ("", "OP_Muted", null); }
+            if (t.IsComplete) { return ("✔", "OP_Safe", "Complete: all frames are taken"); }
+            if (state?.Imaging == t.Id) { return ("▶", "OP_Accent", "Imaging: the run is on this target now"); }
+            if (state?.Paused == t.Id) { return ("‖", "OP_Accent", "Paused: the run is paused on this target; Start sequence continues with it"); }
+            if (!t.Enabled) { return ("■", "OP_Muted", "Stopped: not checked"); }
+            if (t.TotalFrames == 0) { return ("■", "OP_Muted", "Stopped: no exposures to take (no row is ticked, or every Repeat is 0)"); }
+            return ("‖", "OP_Muted", "Paused: checked, not being imaged now");
+        }
+
         public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture) {
-            var t = values.Length > 0 ? values[0] as Core.PlannerTarget : null;
-            var next = values.Length > 1 ? values[1] as Core.PlannerTarget : null;
-            var (icon, key) = t == null ? ("", "OP_Muted")
-                : t.IsComplete ? ("✔", "OP_Safe")
-                : !t.Enabled ? ("‖", "OP_Muted")
-                : ReferenceEquals(t, next) ? ("▶", "OP_Accent")
-                : ("◷", "OP_Info");
-            if (parameter as string != "brush") { return icon; }
-            return Application.Current?.TryFindResource(key) as System.Windows.Media.Brush ?? PlannerBrushes.ByKey(key);
+            var (icon, key, tip) = StateOf(values.Length > 0 ? values[0] as Core.PlannerTarget : null, values.Length > 1 ? values[1] as TargetListState : null);
+            return (parameter as string) switch {
+                "brush" => Application.Current?.TryFindResource(key) as System.Windows.Media.Brush ?? PlannerBrushes.ByKey(key),
+                "tip" => tip,
+                _ => icon
+            };
         }
         public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) => null;
     }

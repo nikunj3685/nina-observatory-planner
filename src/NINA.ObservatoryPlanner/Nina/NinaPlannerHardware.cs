@@ -1,11 +1,16 @@
+using NINA.Core.Enum;
 using NINA.Core.Model;
 using NINA.Core.Utility;
 using NINA.Equipment.Interfaces;
 using NINA.ObservatoryPlanner.Core;
+using NINA.Sequencer.Container;
 using NINA.Sequencer.SequenceItem;
+using NINA.Sequencer.SequenceItem.Dome;
+using NINA.Sequencer.SequenceItem.Imaging;
 using NINA.Sequencer.SequenceItem.Platesolving;
 using NINA.Sequencer.SequenceItem.Telescope;
 using NINA.Sequencer.Trigger;
+using NINA.Sequencer.Utility;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,6 +18,14 @@ using System.Threading;
 using System.Threading.Tasks;
 
 namespace NINA.ObservatoryPlanner.Nina {
+
+    /// <summary>
+    /// An instruction failed and its error behaviour ("Skip to end of sequence instructions" or "Abort") stopped NINA's
+    /// sequence, which also stops the planner block.
+    /// </summary>
+    internal sealed record ErrorStop(string Where, string Item, InstructionErrorBehavior Behavior, bool InEnd) {
+        public string BehaviorText => Behavior == InstructionErrorBehavior.AbortOnError ? "Abort sequence" : "Skip to end of sequence instructions";
+    }
 
     /// <summary>The engine's view of the observatory, implemented with NINA's own sequencer instructions.</summary>
     internal class NinaPlannerHardware : IPlannerHardware {
@@ -29,7 +42,14 @@ namespace NINA.ObservatoryPlanner.Nina {
             this.progress = progress;
         }
 
-        private async Task RunStandalone(ISequenceItem item, CancellationToken token) {
+        // a step the planner runs outside the sequence (connect, between-target steps); between-target steps are never paused
+        private volatile ISequenceItem standalone;
+        private volatile bool standaloneProtected;
+        private volatile PlannerImagingRun imagingRun;
+
+        private async Task RunStandalone(ISequenceItem item, CancellationToken token, bool protect = false) {
+            standalone = item;
+            standaloneProtected = protect;
             try {
                 await item.Run(progress, token);
             } catch (OperationCanceledException) when (token.IsCancellationRequested) {
@@ -37,8 +57,42 @@ namespace NINA.ObservatoryPlanner.Nina {
             } catch (Exception ex) {
                 Logger.Error($"Observatory Planner: {item.Name} failed", ex);
                 planner.Log.Info($"{item.Name} failed: {ex.Message}");
+            } finally {
+                standalone = null;
+                standaloneProtected = false;
             }
         }
+
+        private IEnumerable<ISequenceItem> RunningItems() {
+            try {
+                return ItemUtility.GetRootContainer(container)?.GetCurrentRunningItems() ?? (IEnumerable<ISequenceItem>)Array.Empty<ISequenceItem>();
+            } catch (Exception) { return Array.Empty<ISequenceItem>(); }
+        }
+
+        private IEnumerable<ISequenceTrigger> RunningTriggers() =>
+            imagingRun?.GetTriggersSnapshot().Where(t => t.Status == SequenceEntityStatus.RUNNING) ?? Enumerable.Empty<ISequenceTrigger>();
+
+        public object CurrentStep() =>
+            (object)standalone ?? (object)RunningTriggers().FirstOrDefault() ?? RunningItems().FirstOrDefault(i => i is not TakeExposure && i is not ISequenceContainer);
+
+        /// <summary>A meridian flip (NINA's or a plugin's flip trigger), the dome shutter, park, or a between-targets step.</summary>
+        public bool InProtectedStep() =>
+            (standalone != null && standaloneProtected)
+            || RunningTriggers().Any(t => t.GetType().Name.Contains("MeridianFlip"))
+            || RunningItems().Any(i => i is ParkScope || i is OpenDomeShutter || i is CloseDomeShutter);
+
+        public int FinishedSteps(StageKind kind) {
+            var stage = container.Stage(kind);
+            if (stage == null) { return 0; }
+            var done = 0;
+            foreach (var item in stage.GetItemsSnapshot()) {
+                if (item.Status is SequenceEntityStatus.CREATED or SequenceEntityStatus.RUNNING) { break; }
+                done++;
+            }
+            return done;
+        }
+
+        public bool ImagingStarted(PlannerTarget target) => planner.ImagingTargetId == target.Id;
 
         public async Task ConnectKeptDevices(CancellationToken token) {
             foreach (var device in Devices.Where(planner.Options.Keeps)) {
@@ -46,27 +100,107 @@ namespace NINA.ObservatoryPlanner.Nina {
             }
         }
 
-        public async Task RunStage(StageKind kind, CancellationToken token) {
+        /// <summary>Set when an instruction's error behaviour stopped NINA's sequence during this run.</summary>
+        public ErrorStop ErrorStop { get; private set; }
+
+        public Task RunStage(StageKind kind, CancellationToken token) => ContinueStage(kind, 0, token);
+
+        /// <summary>Runs the stage; its first <paramref name="done"/> steps ran before a pause and are marked finished.</summary>
+        public async Task ContinueStage(StageKind kind, int done, CancellationToken token) {
             var stage = container.Stage(kind);
             if (stage == null || kind == StageKind.Triggers) { return; }
-            await Ui.Run(() => stage.ResetAll());
-            await stage.Run(progress, token);
+            await Ui.Run(() => {
+                stage.ResetAll();
+                foreach (var item in stage.GetItemsSnapshot().Take(done).Where(i => i.Status == SequenceEntityStatus.CREATED)) { item.Status = SequenceEntityStatus.FINISHED; }
+            });
+            if (kind == StageKind.End) { planner.SetEndProblems(null); planner.OnEndStarting(); }
+            if (kind == StageKind.Begin) { planner.OnBeginStarting(); }
+            try {
+                await stage.Run(progress, token);
+            } finally {
+                NoteErrorStop(stage, PlannerStageContainer.Title(kind), kind == StageKind.End, token);
+                if (kind == StageKind.End) { ReportEnd(stage); }
+            }
         }
+
+        internal static IEnumerable<ISequenceItem> Descendants(ISequenceContainer c) {
+            foreach (var item in c.GetItemsSnapshot()) {
+                yield return item;
+                if (item is ISequenceContainer sub) { foreach (var d in Descendants(sub)) { yield return d; } }
+            }
+            foreach (var trigger in (c as ITriggerable)?.GetTriggersSnapshot().OfType<SequenceTrigger>() ?? Enumerable.Empty<SequenceTrigger>()) {
+                if (trigger.TriggerRunner != null) { foreach (var d in Descendants(trigger.TriggerRunner)) { yield return d; } }
+            }
+        }
+
+        /// <summary>After NINA's sequence was cancelled: remembers the failed instruction whose error behaviour did it, if any.</summary>
+        private void NoteErrorStop(ISequenceContainer c, string where, bool inEnd, CancellationToken token) {
+            if (!token.IsCancellationRequested || ErrorStop != null) { return; }
+            ErrorStop = FindErrorStop(c, where, inEnd);
+        }
+
+        /// <summary>The failed instruction in <paramref name="c"/> whose error behaviour stops NINA's whole sequence, or null.</summary>
+        internal static ErrorStop FindErrorStop(ISequenceContainer c, string where, bool inEnd) {
+            var failed = Descendants(c).FirstOrDefault(i => i.Status == SequenceEntityStatus.FAILED
+                && i.ErrorBehavior is InstructionErrorBehavior.SkipToSequenceEndInstructions or InstructionErrorBehavior.AbortOnError);
+            return failed == null ? null : new ErrorStop(where, failed.Name, failed.ErrorBehavior, inEnd);
+        }
+
+        /// <summary>Failed 4 End steps are shown in the panel: a failed power-off or warm-up needs a look.</summary>
+        private void ReportEnd(PlannerStageContainer stage) {
+            var failed = Descendants(stage).Where(i => i.Status == SequenceEntityStatus.FAILED && i is not ISequenceContainer).Select(i => i.Name).ToList();
+            if (failed.Count == 0) { return; }
+            var text = $"4 End: {failed.Count} step{(failed.Count == 1 ? "" : "s")} failed: {string.Join(", ", failed)}. Check the equipment; NINA's log has the details.";
+            planner.Log.Info(text);
+            planner.AddEndProblem(text);
+        }
+
+        private ISequenceItem GapItem(GapStep step) => step switch {
+            GapStep.StopGuiding => F.StopGuiding(),
+            GapStep.StopTracking => F.SetTracking(TrackingMode.Stopped),
+            GapStep.Park => F.Park(),
+            GapStep.FindHome => F.FindHome(),
+            GapStep.CloseDome => F.CloseDome(),
+            GapStep.OpenDome => F.OpenDome(),
+            _ => F.Unpark()
+        };
 
         public async Task RunGapSteps(IReadOnlyList<GapStep> steps, CancellationToken token) {
             foreach (var step in steps) {
                 planner.Log.Info($"Between targets: {step}");
-                var item = step switch {
-                    GapStep.StopGuiding => F.StopGuiding(),
-                    GapStep.StopTracking => F.SetTracking(TrackingMode.Stopped),
-                    GapStep.Park => F.Park(),
-                    GapStep.FindHome => F.FindHome(),
-                    GapStep.CloseDome => F.CloseDome(),
-                    GapStep.OpenDome => F.OpenDome(),
-                    _ => F.Unpark()
-                };
-                await RunStandalone(item, token);
+                await RunStandalone(GapItem(step), token, protect: true);
             }
+        }
+
+        private bool DomeConnected() => planner.Nina.Dome.GetInfo()?.Connected == true;
+
+        /// <summary>Runs the steps; false when one of <paramref name="mustWork"/> failed.</summary>
+        private async Task<bool> RunWeatherSteps(string what, IEnumerable<GapStep> steps, ISet<GapStep> mustWork, CancellationToken token) {
+            var ok = true;
+            foreach (var step in steps) {
+                planner.Log.Info($"{what}: {step}");
+                var item = GapItem(step);
+                await RunStandalone(item, token, protect: true);
+                if (mustWork.Contains(step) && item.Status != SequenceEntityStatus.FINISHED) {
+                    planner.Log.Info($"{what}: {step} failed");
+                    ok = false;
+                }
+            }
+            return ok;
+        }
+
+        public Task<bool> CloseUp(CancellationToken token) {
+            var steps = new List<GapStep> { GapStep.StopGuiding, GapStep.StopTracking, GapStep.Park };
+            if (DomeConnected()) { steps.Add(GapStep.CloseDome); }
+            return RunWeatherSteps("Closing up for the weather", steps, new HashSet<GapStep> { GapStep.Park, GapStep.CloseDome }, token);
+        }
+
+        public Task<bool> Reopen(CancellationToken token) {
+            planner.OnBeginStarting(); // autofocus before the first frame, as after 1 Begin
+            var steps = new List<GapStep>();
+            if (DomeConnected()) { steps.Add(GapStep.OpenDome); }
+            steps.Add(GapStep.Unpark);
+            return RunWeatherSteps("Opening up after the weather", steps, new HashSet<GapStep> { GapStep.OpenDome, GapStep.Unpark }, token);
         }
 
         /// <summary>Devices imaging needs, as named by Connect Equipment, with whether the profile has one set up.</summary>
@@ -114,6 +248,7 @@ namespace NINA.ObservatoryPlanner.Nina {
         private static bool IsMove(ISequenceItem i) => i is Center || i is SlewScopeToRaDec; // CenterAndRotate derives from Center
 
         public async Task<int> RunTarget(PlannerTarget target, Func<PlannerExposure, bool> canStartFrame, CancellationToken token) {
+            planner.ImagingTargetId = null;
             var dso = F.TargetContainer(target);
 
             // 2 Start of target, adapted to this target: its "When target starts" choice replaces the stage's move step.
@@ -139,6 +274,7 @@ namespace NINA.ObservatoryPlanner.Nina {
 
         /// <summary>Resume on the same target, mount where it was: no slew or centering, just tracking on and guiding restarted.</summary>
         public async Task<int> ResumeTarget(PlannerTarget target, Func<PlannerExposure, bool> canStartFrame, CancellationToken token) {
+            planner.ImagingTargetId = null;
             var dso = F.TargetContainer(target);
             dso.Add(F.SetTracking(TrackingMode.Sidereal));
             if (planner.Nina.Guider.GetInfo()?.Connected == true) { dso.Add(F.StartGuiding(forceCalibration: false)); }
@@ -149,17 +285,22 @@ namespace NINA.ObservatoryPlanner.Nina {
             if (target.DelayFirst > 0) { dso.Add(F.WaitSeconds(target.DelayFirst)); }
 
             var run = new PlannerImagingRun(planner, target, canStartFrame);
+            imagingRun = run;
             foreach (var trigger in container.Stage(StageKind.Triggers)?.Triggers.ToList() ?? new List<ISequenceTrigger>()) {
                 run.Add((ISequenceTrigger)trigger.Clone());
             }
             dso.Add(run);
 
+            planner.TakeGuideStarGaveUp();
             await Ui.Run(() => container.Add(dso));
             try {
                 await dso.Run(progress, token);
             } finally {
+                NoteErrorStop(dso, $"{target.Name} (2 Start of target or imaging)", inEnd: false, token);
+                imagingRun = null;
                 await Ui.Run(() => container.Remove(dso));
             }
+            if (planner.TakeGuideStarGaveUp()) { throw new GuideStarLostException(target.Name); }
             return run.FramesTaken;
         }
     }

@@ -13,6 +13,15 @@ namespace NINA.ObservatoryPlanner.Core {
     public enum ExposureOrder { RotateThroughFilters, FinishEachRowFirst }
     public enum RunMode { WithSafety, WithoutSafety }
     public enum GapMountAction { KeepTracking, StopTrackingAndPark, StopTrackingAndFindHome }
+    /// <summary>What happens when it turns unsafe during the night (with a safety monitor).</summary>
+    public enum UnsafeAction {
+        /// <summary>4 End: the full shutdown (warm the camera, power off).</summary>
+        RunEnd,
+        /// <summary>Stop guiding, park, close the dome; power, connections and camera cooling stay on until safe again.</summary>
+        CloseUpAndWait
+    }
+    /// <summary>The image type of an exposure row. NINA 3 has no separate dark flat type: dark flats are saved as DARK.</summary>
+    public enum ExposureType { Light, Dark, Bias, Flat, DarkFlat }
 
     public abstract class Observable : INotifyPropertyChanged {
         public event PropertyChangedEventHandler PropertyChanged;
@@ -51,26 +60,31 @@ namespace NINA.ObservatoryPlanner.Core {
         private bool enabled = true;
         private string filter = "L";
         private double exposureTime = 120;
-        private int gain = -1;
+        private ExposureType type = ExposureType.Light;
         private string binning = "1x1";
         private int count = 10;
         private int done;
+        private bool isActive;
 
         [JsonProperty] public Guid Id { get; set; } = Guid.NewGuid();
         [JsonProperty] public bool Enabled { get => enabled; set => Set(ref enabled, value); }
         [JsonProperty] public string Filter { get => filter; set => Set(ref filter, value); }
         /// <summary>Seconds</summary>
         [JsonProperty] public double ExposureTime { get => exposureTime; set => Set(ref exposureTime, Math.Max(0, value)); }
-        /// <summary>-1 = camera default</summary>
-        [JsonProperty] public int Gain { get => gain; set => Set(ref gain, value); }
+        // Gain is not set per row: frames use the camera's gain (NINA's camera settings or the driver default).
+        // Lists saved before 1.1 have a "Gain" value, which is ignored when they are read.
+        [JsonProperty] public ExposureType Type { get => type; set => Set(ref type, value); }
         [JsonProperty] public string Binning { get => binning; set => Set(ref binning, string.IsNullOrWhiteSpace(value) ? "1x1" : value); }
         [JsonProperty] public int Count { get => count; set { if (Set(ref count, Math.Max(0, value))) { Raise(nameof(Remaining)); } } }
         [JsonProperty] public int Done { get => done; set { if (Set(ref done, Math.Max(0, value))) { Raise(nameof(Remaining)); } } }
 
         public int Remaining => Math.Max(0, Count - Done);
 
+        /// <summary>True while this row is the one being imaged (the ▶ in the exposure list). Not saved.</summary>
+        public bool IsActive { get => isActive; set => Set(ref isActive, value); }
+
         public PlannerExposure Clone(bool keepProgress) => new PlannerExposure {
-            Enabled = Enabled, Filter = Filter, ExposureTime = ExposureTime, Gain = Gain, Binning = Binning, Count = Count, Done = keepProgress ? Done : 0
+            Enabled = Enabled, Filter = Filter, ExposureTime = ExposureTime, Type = Type, Binning = Binning, Count = Count, Done = keepProgress ? Done : 0
         };
     }
 
@@ -173,6 +187,17 @@ namespace NINA.ObservatoryPlanner.Core {
         private string workflowName;
         private int safeDelaySeconds;
         private bool autoStartOnLaunch;
+        private bool autofocusAfterBegin = true;
+        private bool guideLostWatch = true;
+        private int guideLostWaitSeconds = 60;
+        private GuideLostAction guideLostAction = GuideLostAction.StopForNight;
+        private bool guidingCheck;
+        private double guidingLimitPixels = 1.0;
+        private int guidingCheckWaitSeconds = 120;
+        private bool closeGuiderAppOnDisconnect = true;
+        private bool closeMountAppOnDisconnect = true;
+        private UnsafeAction unsafeAction = UnsafeAction.RunEnd;
+        private double closeUpMaxHours = 2;
 
         [JsonProperty] public RunMode RunMode { get => runMode; set => Set(ref runMode, value); }
         /// <summary>Devices connected at Run and never disconnected by the planner (NINA device names).</summary>
@@ -181,8 +206,6 @@ namespace NINA.ObservatoryPlanner.Core {
         [JsonProperty] public GapMountAction GapMount { get => gapMount; set => Set(ref gapMount, value); }
         /// <summary>Only used with <see cref="GapMountAction.StopTrackingAndPark"/>.</summary>
         [JsonProperty] public bool GapCloseDome { get => gapCloseDome; set => Set(ref gapCloseDome, value); }
-        /// <summary>How many minutes before the next target the planner wakes up after a long wait.</summary>
-        [JsonProperty] public int GapLeadMinutes { get; set; } = 5;
         [JsonProperty] public double DefaultDelayFirst { get => defaultDelayFirst; set => Set(ref defaultDelayFirst, Math.Max(0, value)); }
         [JsonProperty] public double DefaultDelayBetween { get => defaultDelayBetween; set => Set(ref defaultDelayBetween, Math.Max(0, value)); }
         [JsonProperty] public ExposureOrder DefaultOrder { get => defaultOrder; set => Set(ref defaultOrder, value); }
@@ -195,14 +218,40 @@ namespace NINA.ObservatoryPlanner.Core {
         [JsonProperty] public int SafeDelaySeconds { get => safeDelaySeconds; set => Set(ref safeDelaySeconds, Math.Max(0, value)); }
         /// <summary>Start Run forever / Run by itself when NINA starts (after the last workflow and target list are loaded).</summary>
         [JsonProperty] public bool AutoStartOnLaunch { get => autoStartOnLaunch; set => Set(ref autoStartOnLaunch, value); }
+        /// <summary>After every 1 Begin (the equipment was off), autofocus before the first light frame.</summary>
+        [JsonProperty] public bool AutofocusAfterBegin { get => autofocusAfterBegin; set => Set(ref autofocusAfterBegin, value); }
+        /// <summary>Watch the guider during light frames and act when the guide star is lost.</summary>
+        [JsonProperty] public bool GuideLostWatch { get => guideLostWatch; set => Set(ref guideLostWatch, value); }
+        /// <summary>How long to wait for the guider to find the star again, counted from when it was lost.</summary>
+        [JsonProperty] public int GuideLostWaitSeconds { get => guideLostWaitSeconds; set => Set(ref guideLostWaitSeconds, Math.Max(10, value)); }
+        /// <summary>What happens when the star is not found again within the wait.</summary>
+        [JsonProperty] public GuideLostAction GuideLostAction { get => guideLostAction; set => Set(ref guideLostAction, value); }
+        /// <summary>Start light frames only while the guiding error is below the limit, and restart a frame when it stays above it.</summary>
+        [JsonProperty] public bool GuidingCheck { get => guidingCheck; set => Set(ref guidingCheck, value); }
+        /// <summary>The guiding error limit in guide camera pixels.</summary>
+        [JsonProperty] public double GuidingLimitPixels { get => guidingLimitPixels; set => Set(ref guidingLimitPixels, Math.Max(0.1, value)); }
+        /// <summary>How long to wait before a frame for the guiding error to come down; then the frame starts anyway.</summary>
+        [JsonProperty] public int GuidingCheckWaitSeconds { get => guidingCheckWaitSeconds; set => Set(ref guidingCheckWaitSeconds, Math.Max(10, value)); }
+        /// <summary>While NINA's sequence runs, disconnecting the guider also makes PHD2 disconnect its equipment and close.</summary>
+        [JsonProperty] public bool CloseGuiderAppOnDisconnect { get => closeGuiderAppOnDisconnect; set => Set(ref closeGuiderAppOnDisconnect, value); }
+        /// <summary>While NINA's sequence runs, disconnecting the mount also closes its ASCOM program (e.g. GS Server); PHD2 lets go of it first.</summary>
+        [JsonProperty] public bool CloseMountAppOnDisconnect { get => closeMountAppOnDisconnect; set => Set(ref closeMountAppOnDisconnect, value); }
+        /// <summary>With safety: what happens when it turns unsafe during the night, once 1 Begin has finished.</summary>
+        [JsonProperty] public UnsafeAction UnsafeAction { get => unsafeAction; set => Set(ref unsafeAction, value); }
+        /// <summary>Closed up for the weather: 4 End runs when it is still unsafe after this many hours, or when the night ends, whichever comes first.</summary>
+        [JsonProperty] public double CloseUpMaxHours { get => closeUpMaxHours; set => Set(ref closeUpMaxHours, Math.Max(0.25, value)); }
         /// <summary>Name of the workflow last loaded or saved from the Equipment &amp; Safety tab.</summary>
         [JsonProperty] public string WorkflowName { get => workflowName; set => Set(ref workflowName, value); }
         /// <summary>Takes every setting from <paramref name="o"/> (switching NINA profile keeps this same object).</summary>
         public void CopyFrom(PlannerOptions o) {
-            RunMode = o.RunMode; GapMinutes = o.GapMinutes; GapMount = o.GapMount; GapCloseDome = o.GapCloseDome; GapLeadMinutes = o.GapLeadMinutes;
+            RunMode = o.RunMode; GapMinutes = o.GapMinutes; GapMount = o.GapMount; GapCloseDome = o.GapCloseDome;
             DefaultDelayFirst = o.DefaultDelayFirst; DefaultDelayBetween = o.DefaultDelayBetween; DefaultOrder = o.DefaultOrder;
             ConfirmDeleteTarget = o.ConfirmDeleteTarget; ConfirmDeleteExposure = o.ConfirmDeleteExposure; DarkSunAltitude = o.DarkSunAltitude;
-            SafeDelaySeconds = o.SafeDelaySeconds; AutoStartOnLaunch = o.AutoStartOnLaunch; WorkflowName = o.WorkflowName;
+            SafeDelaySeconds = o.SafeDelaySeconds; AutoStartOnLaunch = o.AutoStartOnLaunch; AutofocusAfterBegin = o.AutofocusAfterBegin;
+            GuideLostWatch = o.GuideLostWatch; GuideLostWaitSeconds = o.GuideLostWaitSeconds; GuideLostAction = o.GuideLostAction;
+            GuidingCheck = o.GuidingCheck; GuidingLimitPixels = o.GuidingLimitPixels; GuidingCheckWaitSeconds = o.GuidingCheckWaitSeconds;
+            CloseGuiderAppOnDisconnect = o.CloseGuiderAppOnDisconnect; CloseMountAppOnDisconnect = o.CloseMountAppOnDisconnect;
+            UnsafeAction = o.UnsafeAction; CloseUpMaxHours = o.CloseUpMaxHours; WorkflowName = o.WorkflowName;
             KeepConnected.Clear();
             foreach (var d in o.KeepConnected) { KeepConnected.Add(d); }
         }

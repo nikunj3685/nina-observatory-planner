@@ -46,6 +46,8 @@ namespace NINA.ObservatoryPlanner.Nina {
 
             var begin = new List<ISequenceItem>();
             if (!safety) { begin.Add(f.WaitForTime("DuskProvider")); }
+            // the power switches need the hub, also when it is not in "Keep connected"
+            begin.Add(f.Connect("Switch"));
             begin.AddRange(PowerOn.Select(On));
             begin.Add(f.WaitSeconds(15));
             begin.Add(f.ConnectAll());
@@ -58,7 +60,7 @@ namespace NINA.ObservatoryPlanner.Nina {
 
             var targetStart = new List<ISequenceItem> { f.Center(), f.StartGuiding(true) };
 
-            var triggers = new List<ISequenceTrigger> { f.DitherAfter(1), f.AutofocusAfterFilterChange(), f.MeridianFlip() };
+            var triggers = new List<ISequenceTrigger> { f.DitherAfter(1), FilterChangeAutofocus(planner), f.MeridianFlip() };
             if (dome && !safety) { triggers.Add(f.SynchronizeDome()); }
 
             // Connect Mount first: if the weather turned unsafe early in 1 Begin, the mount is not connected yet and could not park.
@@ -82,6 +84,14 @@ namespace NINA.ObservatoryPlanner.Nina {
 
             return Assemble(planner, begin, targetStart, triggers, end);
         }
+
+        /// <summary>The planner's own "AF after filter change", named like the sequencer shows it.</summary>
+        public static PlannerAutofocusOnFilterChange FilterChangeAutofocus(PlannerService planner) => new(planner) {
+            Name = PlannerAutofocusOnFilterChange.DisplayName,
+            Description = "Autofocus before a light frame whose filter differs from the previous light frame.",
+            Category = "Observatory Planner",
+            Icon = System.Windows.Application.Current?.TryFindResource("AutoFocusAfterFilterSVG") as System.Windows.Media.GeometryGroup
+        };
 
         public static ObservatoryPlannerContainer Assemble(PlannerService planner, IEnumerable<ISequenceItem> begin, IEnumerable<ISequenceItem> targetStart,
                                                            IEnumerable<ISequenceTrigger> triggers, IEnumerable<ISequenceItem> end) {

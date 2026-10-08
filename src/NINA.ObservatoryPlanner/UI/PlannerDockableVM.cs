@@ -83,6 +83,10 @@ namespace NINA.ObservatoryPlanner.UI {
 
             GapMountChoices = new[] { new Choice(GapMountAction.KeepTracking, "Keep tracking"), new Choice(GapMountAction.StopTrackingAndPark, "Stop tracking and Park"), new Choice(GapMountAction.StopTrackingAndFindHome, "Stop tracking and Find home") };
             BinningChoices = new[] { "1x1", "2x2", "3x3", "4x4" };
+            ExposureTypeChoices = new[] {
+                new Choice(ExposureType.Light, "Light"), new Choice(ExposureType.Dark, "Dark"), new Choice(ExposureType.Bias, "Bias"),
+                new Choice(ExposureType.Flat, "Flat"), new Choice(ExposureType.DarkFlat, "Dark flat")
+            };
             KeepItems = NinaPlannerHardware.Devices.Select(d => new KeepItem(d, Options)).ToList();
             Brush[] stageBrushes = { PlannerBrushes.Safe, PlannerBrushes.Info, PlannerBrushes.Accent, PlannerBrushes.Unsafe };
             Stages = new ObservableCollection<StageView>(Enumerable.Range(1, 4).Select(n => new StageView { Number = n, Brush = stageBrushes[n - 1] }));
@@ -112,11 +116,12 @@ namespace NINA.ObservatoryPlanner.UI {
             EditInSequencerCommand = new Command(EditInSequencer);
             RefreshStagesCommand = new Command(RefreshStages);
             AutofocusCommand = new Command(() => planner.RequestAutofocus(), _ => planner.IsRunning && planner.Phase == PlannerPhase.Imaging);
-            PauseNowCommand = new Command(() => planner.RequestPause(PauseKind.Now), _ => planner.IsRunning);
-            PauseAfterFrameCommand = new Command(() => planner.RequestPause(PauseKind.AfterFrame), _ => planner.IsRunning);
+            PauseNowCommand = new Command(() => planner.RequestPause(PauseKind.Now), _ => PauseEnabled);
+            PauseAfterFrameCommand = new Command(() => planner.RequestPause(PauseKind.AfterFrame), _ => PauseEnabled);
             CancelPauseCommand = new Command(() => planner.CancelPause(), _ => planner.PausePending);
             ResumeCommand = new Command(() => planner.Resume(), _ => planner.IsPaused && !planner.IsRunning);
             GoOptionsCommand = new Command(() => SelectedPlannerTab = 2);
+            GoInfoCommand = new Command(() => SelectedPlannerTab = 3);
             ApplyDefaultsToAllCommand = new Command(ApplyDefaultsToAll);
             ResetConfirmationsCommand = new Command(() => { Options.ConfirmDeleteTarget = true; Options.ConfirmDeleteExposure = true; });
 
@@ -145,6 +150,7 @@ namespace NINA.ObservatoryPlanner.UI {
             refreshTimer.Tick += (_, _) => {
                 RefreshStages();
                 RefreshSafety();
+                RaisePropertyChanged(nameof(GuidingLimitArcsec));
                 // save the workflow whenever it changes, so a NINA restart brings back the exact stages
                 if (!planner.IsRunning) {
                     try { if (workflows.AutoSave()) { RaiseWorkflow(); } } catch (Exception ex) { Logger.Error(ex); }
@@ -157,7 +163,7 @@ namespace NINA.ObservatoryPlanner.UI {
         }
 
         private int selectedPlannerTab;
-        /// <summary>0 Targets, 1 Equipment &amp; Safety, 2 Options (opened with the gear).</summary>
+        /// <summary>0 Targets, 1 Equipment &amp; Safety, 2 Options (opened with the gear), 3 Info (opened with the !).</summary>
         public int SelectedPlannerTab { get => selectedPlannerTab; set { selectedPlannerTab = value; RaisePropertyChanged(); if (value == 1) { RefreshStages(); } } }
 
         public PlannerOptions Options => planner.Options;
@@ -176,10 +182,27 @@ namespace NINA.ObservatoryPlanner.UI {
         public bool IsPaused => planner.IsPaused && !planner.IsRunning;
         public bool PauseShown => planner.IsRunning && !planner.PausePending;
         public bool PausingShown => planner.IsRunning && planner.PausePending;
+        /// <summary>4 End always runs to the end (park, close, warm, power off), so it can't be paused.</summary>
+        public bool PauseEnabled => planner.PauseAllowed && planner.Phase != PlannerPhase.End;
+        public string PauseTip => planner.Phase == PlannerPhase.End
+            ? "4 End is running: it always runs to the end (park, close, warm, power off), so it can't be paused."
+            : !planner.PauseAllowed
+                ? "Pause is available once 1 Begin has started. While waiting for safe or for the next night nothing is powered: use Stop, and Run when you're ready."
+                : "Pause the run: everything stays powered and on target. Start sequence continues.";
+        /// <summary>The guiding limit in arcseconds, from PHD2's pixel scale.</summary>
+        public string GuidingLimitArcsec => planner.GuiderPixelScale is double scale
+            ? $"≈ {Options.GuidingLimitPixels * scale:0.00}″ with PHD2's pixel scale of {scale:0.00}″/px"
+            : "The limit in arcseconds is shown here while PHD2 is connected";
+
+        /// <summary>4 End steps that failed the last time it ran, or null.</summary>
+        public string EndProblems => planner.EndProblems;
 
         public string StatusText {
             get {
                 if (planner.IsPaused && !planner.IsRunning) {
+                    if (planner.PausePoint?.BeginDone is int done && planner.PauseNote == null) {
+                        return $"Paused during 1 Begin, after step {done}. Press Start sequence to continue 1 Begin from step {done + 1}.";
+                    }
                     var where = planner.PausePoint?.TargetName != null ? $"Paused on {planner.PausePoint.TargetName}." : "Paused.";
                     return planner.PauseNote != null ? $"{where} {planner.PauseNote}" : $"{where} Guiding stopped; tracking, dome and power stay on. Press Start sequence to continue.";
                 }
@@ -199,7 +222,7 @@ namespace NINA.ObservatoryPlanner.UI {
             : !planner.IsRunning || !WithSafety ? PlannerBrushes.Muted : safe == true ? PlannerBrushes.Safe : PlannerBrushes.Unsafe;
 
         private bool Step(params PlannerPhase[] phases) => planner.IsRunning && phases.Contains(planner.Phase);
-        public bool StepWait => Step(PlannerPhase.WaitingForSafe, PlannerPhase.WaitingForNextNight);
+        public bool StepWait => Step(PlannerPhase.WaitingForSafe, PlannerPhase.WaitingForNextNight, PlannerPhase.ClosedUp);
         public bool StepBegin => Step(PlannerPhase.Begin);
         public bool StepTarget => Step(PlannerPhase.Imaging) && !planner.IsTakingFrames;
         public bool StepImaging => Step(PlannerPhase.Imaging) && planner.IsTakingFrames;
@@ -217,7 +240,11 @@ namespace NINA.ObservatoryPlanner.UI {
                 case nameof(PlannerService.PauseNote):
                     RefreshSafety();
                     RaiseStatus();
+                    RaisePropertyChanged(nameof(ListState));
                     CommandManager.InvalidateRequerySuggested();
+                    break;
+                case nameof(PlannerService.CurrentTarget):
+                    RaisePropertyChanged(nameof(ListState));
                     break;
                 case nameof(PlannerService.List):
                     WatchTargets();
@@ -228,6 +255,9 @@ namespace NINA.ObservatoryPlanner.UI {
                     break;
                 case nameof(PlannerService.AutofocusPending):
                     RaisePropertyChanged(nameof(AutofocusText));
+                    break;
+                case nameof(PlannerService.EndProblems):
+                    RaisePropertyChanged(nameof(EndProblems));
                     break;
                 case nameof(PlannerService.ListName):
                 case nameof(PlannerService.ListPath):
@@ -240,6 +270,7 @@ namespace NINA.ObservatoryPlanner.UI {
 
         private void RaiseStatus() {
             foreach (var p in new[] { nameof(IsRunning), nameof(RunButtonText), nameof(RunButtonTip), nameof(StopShown), nameof(IsPaused), nameof(PauseShown), nameof(PausingShown),
+                nameof(PauseEnabled), nameof(PauseTip),
                 nameof(StatusText), nameof(PillText), nameof(PillBrush),
                 nameof(StepWait), nameof(StepBegin), nameof(StepTarget), nameof(StepImaging), nameof(StepEnd) }) {
                 RaisePropertyChanged(p);
@@ -265,6 +296,7 @@ namespace NINA.ObservatoryPlanner.UI {
 
         public IReadOnlyList<string> FilterChoices => planner.FilterNames().DefaultIfEmpty("L").ToList();
         public IReadOnlyList<string> BinningChoices { get; }
+        public IReadOnlyList<Choice> ExposureTypeChoices { get; }
 
         public PlannerTarget SelectedTarget {
             get => selectedTarget;
@@ -277,6 +309,11 @@ namespace NINA.ObservatoryPlanner.UI {
             }
         }
         public bool HasSelection => SelectedTarget != null;
+
+        /// <summary>For the target list icons: the target being imaged now and the one the run is paused on.</summary>
+        public TargetListState ListState => new(
+            planner.IsRunning && planner.Phase == PlannerPhase.Imaging ? planner.CurrentTarget?.Id : null,
+            planner.IsPaused && !planner.IsRunning ? planner.PausePoint?.TargetId : null);
 
         /// <summary>The target the loop takes next: the first checked target that is not complete.</summary>
         public PlannerTarget NextTarget => Targets.FirstOrDefault(t => t.Enabled && !t.IsComplete);
@@ -335,11 +372,13 @@ namespace NINA.ObservatoryPlanner.UI {
         // ---------- options ----------
         public bool WithSafety { get => Options.RunMode == RunMode.WithSafety; set { if (value) { ChangeMode(RunMode.WithSafety); } } }
         public bool WithoutSafety { get => Options.RunMode == RunMode.WithoutSafety; set { if (value) { ChangeMode(RunMode.WithoutSafety); } } }
+        /// <summary>"Close up and wait" is chosen: its time limit can be edited.</summary>
+        public bool CloseUpOnUnsafe => Options.UnsafeAction == UnsafeAction.CloseUpAndWait;
         public IReadOnlyList<Choice> GapMountChoices { get; }
         public bool GapCloseDomeVisible => Options.GapMount == GapMountAction.StopTrackingAndPark;
         public IReadOnlyList<StepChip> GapWaitSteps => Chips(GapPlan.For(Options.GapMount, Options.GapCloseDome).Wait.Select(StepLabel));
         public IReadOnlyList<StepChip> GapResumeSteps => Chips(GapPlan.For(Options.GapMount, Options.GapCloseDome).Resume.Select(StepLabel).Append("2 Start of target"));
-        public string GapResumeLabel => $"{Options.GapLeadMinutes} min before the next target";
+        public string GapResumeLabel => "At the next target's start time";
         public string GapHint => $"Shorter waits: guiding stops and the mount keeps tracking. Without a later target tonight the planner runs 4 End instead.";
 
         private static IReadOnlyList<StepChip> Chips(IEnumerable<string> steps) {
@@ -383,6 +422,7 @@ namespace NINA.ObservatoryPlanner.UI {
         public ICommand AutofocusCommand { get; }
         public string AutofocusText => planner.AutofocusPending ? "◎  Autofocus requested" : "◎  Autofocus";
         public ICommand GoOptionsCommand { get; }
+        public ICommand GoInfoCommand { get; }
         public ICommand ApplyDefaultsToAllCommand { get; }
         public ICommand ResetConfirmationsCommand { get; }
 
@@ -461,7 +501,8 @@ namespace NINA.ObservatoryPlanner.UI {
             }
             var name = framing.DSO?.Name;
             if (string.IsNullOrWhiteSpace(name)) { name = "Framed target"; }
-            if (!mosaic) { rects = framing.Rectangle != null ? new() { framing.Rectangle } : rects.Take(1).ToList(); }
+            // the camera rectangles carry the position angle; the outer Rectangle's DSOPositionAngle is never set by NINA
+            if (!mosaic) { rects = rects.Take(1).ToList(); }
             PlannerTarget first = null;
             foreach (var r in rects) {
                 var t = planner.NewTarget(rects.Count > 1 ? $"{name} {r.Name}" : name);
@@ -738,6 +779,8 @@ namespace NINA.ObservatoryPlanner.UI {
                     RaisePropertyChanged(nameof(GapCloseDomeVisible)); RaisePropertyChanged(nameof(GapWaitSteps)); RaisePropertyChanged(nameof(GapResumeSteps));
                 }
                 if (property == nameof(PlannerOptions.WorkflowName)) { RaiseWorkflow(); }
+                if (property == nameof(PlannerOptions.GuidingLimitPixels)) { RaisePropertyChanged(nameof(GuidingLimitArcsec)); }
+                if (property == nameof(PlannerOptions.UnsafeAction)) { RaisePropertyChanged(nameof(CloseUpOnUnsafe)); }
             });
         }
 

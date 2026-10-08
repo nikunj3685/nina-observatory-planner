@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace NINA.ObservatoryPlanner.Core {
 
-    public enum PlannerPhase { Idle, Connecting, WaitingForSafe, Begin, Imaging, WaitingBetweenTargets, End, WaitingForNextNight, Finished, Stopped, Paused }
+    public enum PlannerPhase { Idle, Connecting, WaitingForSafe, Begin, Imaging, WaitingBetweenTargets, End, WaitingForNextNight, Finished, Stopped, Paused, ClosedUp }
 
     public readonly record struct SafetyState(bool Connected, bool IsSafe);
 
@@ -42,23 +43,57 @@ namespace NINA.ObservatoryPlanner.Core {
         (double RaHours, double DecDeg)? MountPosition() => null;
 
         Task StopGuiding(CancellationToken token) => Task.CompletedTask;
+
+        /// <summary>The instruction or trigger running now, other than a frame (a slew, centering, autofocus, a wait), or null.</summary>
+        object CurrentStep() => null;
+
+        /// <summary>True while a step runs that is never interrupted by Pause: a meridian flip, the dome shutter, park, a between-targets step.</summary>
+        bool InProtectedStep() => false;
+
+        /// <summary>How many of the stage's first steps are done (after it was interrupted), so it can continue from the next one.</summary>
+        int FinishedSteps(StageKind stage) => 0;
+
+        /// <summary>Runs the stage without its first <paramref name="done"/> steps, which ran before a pause.</summary>
+        Task ContinueStage(StageKind stage, int done, CancellationToken token) => RunStage(stage, token);
+
+        /// <summary>True once the target's imaging has begun, i.e. 2 Start of target ran to its end.</summary>
+        bool ImagingStarted(PlannerTarget target) => true;
+
+        /// <summary>Closes up for the weather: stop guiding, stop tracking, park, close the dome. False when park or the dome failed.</summary>
+        async Task<bool> CloseUp(CancellationToken token) {
+            await RunGapSteps(GapPlan.For(GapMountAction.StopTrackingAndPark, closeDome: true).Wait, token);
+            return true;
+        }
+
+        /// <summary>Safe again after a close-up: open the dome and unpark (autofocus runs before the next frame). False when that failed.</summary>
+        async Task<bool> Reopen(CancellationToken token) {
+            await RunGapSteps(GapPlan.For(GapMountAction.StopTrackingAndPark, closeDome: true).Resume, token);
+            return true;
+        }
     }
 
     public interface IPlannerLog {
         void Phase(PlannerPhase phase, string message, PlannerTarget target = null);
         void Info(string message);
+        /// <summary>Updates the status shown in the panel without logging it (e.g. a countdown).</summary>
+        void Status(string message) { }
     }
 
-    public enum NightResult { Finished, Unsafe, Paused, Stopped }
+    public enum NightResult { Finished, Unsafe, Paused, Stopped, StoppedForNight, ClosedUp }
 
     /// <summary>How a run ended.</summary>
     public enum RunOutcome { Finished, Paused, Stopped }
 
-    /// <summary>What the user asked for while a run is going.</summary>
+    /// <summary>What the user asked for while a run is going. AfterFrame is "Pause after this step": the frame or instruction running now finishes first.</summary>
     public enum PauseKind { None, Now, AfterFrame }
 
-    /// <summary>Where a paused run stood: the target being imaged and where the mount pointed.</summary>
-    public sealed record PausePoint(Guid? TargetId, string TargetName, double? MountRaHours, double? MountDecDeg, DateTime At);
+    /// <summary>
+    /// Where a paused run stood: the target being imaged and where the mount pointed. <paramref name="BeginDone"/>: paused
+    /// during 1 Begin after that many steps (Start sequence continues 1 Begin from the next one). <paramref name="ImagingStarted"/>:
+    /// 2 Start of target had run to its end (only then can a resume skip it).
+    /// </summary>
+    public sealed record PausePoint(Guid? TargetId, string TargetName, double? MountRaHours, double? MountDecDeg, DateTime At,
+                                    int? BeginDone = null, bool ImagingStarted = true);
 
     /// <summary>How a run starts.</summary>
     public enum StartKind {
@@ -91,7 +126,13 @@ namespace NINA.ObservatoryPlanner.Core {
         private volatile PauseKind pauseRequested;
         private volatile bool stopRequested;
         private volatile bool inEnd;
+        private volatile bool nightActive;
+        private volatile bool waitingForTarget;
+        private int? beginDone;
         private PlannerTarget current;
+
+        /// <summary>How the pause watcher waits between looks at the running step. Real time by default; tests poll faster.</summary>
+        public Func<TimeSpan, CancellationToken, Task> StepPoll { get; set; } = (d, t) => Task.Delay(d, t);
 
         public TimeSpan SafetyPoll { get; set; } = TimeSpan.FromSeconds(2);
         /// <summary>While waiting for a target, re-check the plan at least this often (the list can be edited meanwhile).</summary>
@@ -122,18 +163,63 @@ namespace NINA.ObservatoryPlanner.Core {
 
         public bool PausePending => pauseRequested != PauseKind.None;
 
+        /// <summary>True while 4 End runs: it always runs to the end, so it can't be paused.</summary>
+        public bool InEnd => inEnd;
+
         /// <summary>
-        /// Pause now: the frame being taken is dropped. Pause after frame: the current frame (or step) finishes first.
-        /// Steps other than a frame (1 Begin, a slew, a wait) always finish first; 4 End is never paused.
+        /// Pause is possible once 1 Begin has started, until 4 End starts. While waiting for safe or for the next night
+        /// nothing is powered: Stop and Run are used instead.
+        /// </summary>
+        public bool PauseAllowed => nightActive && !inEnd;
+
+        /// <summary>"1:05:09" or "4:07": the time left in a countdown.</summary>
+        public static string Countdown(TimeSpan left) {
+            if (left < TimeSpan.Zero) { left = TimeSpan.Zero; }
+            var s = (int)Math.Ceiling(left.TotalSeconds);
+            return s >= 3600 ? $"{s / 3600}:{s / 60 % 60:00}:{s % 60:00}" : $"{s / 60}:{s % 60:00}";
+        }
+
+        /// <summary>
+        /// Pause now stops whatever runs (a frame is dropped, a slew, centering, autofocus, a wait or 1 Begin is interrupted).
+        /// Pause after this step lets the frame or instruction running now finish first. A meridian flip, the dome shutter
+        /// and park always finish first, and 4 End is never paused. Between targets the wait simply ends.
         /// </summary>
         public void RequestPause(PauseKind kind) {
             if (kind == PauseKind.None) { return; }
+            object waitFor = null;
             lock (gate) {
+                if (inEnd) { log.Info("Pause ignored: 4 End is running and always runs to the end"); return; }
+                if (!nightActive) { log.Info("Pause ignored: nothing runs yet (waiting for safe or for the next night); use Stop instead"); return; }
                 if (pauseRequested == PauseKind.Now) { return; }
                 pauseRequested = kind;
-                log.Info(kind == PauseKind.Now ? "Pause requested: now" : "Pause requested: after the current frame");
-                // the caller passes Now only while a frame is being taken; 4 End is never interrupted
-                if (kind == PauseKind.Now && !inEnd) { interrupt.Cancel(); }
+                log.Info(kind == PauseKind.Now ? "Pause requested: now" : "Pause requested: after the current step");
+                // the wait between targets watches for a pause itself and first undoes a park
+                if (waitingForTarget) { return; }
+                if (kind == PauseKind.AfterFrame) {
+                    waitFor = hardware.CurrentStep();
+                    if (waitFor == null) { return; } // a frame: the imaging loop pauses before the next one
+                } else if (!hardware.InProtectedStep()) {
+                    interrupt.Cancel();
+                    return;
+                }
+            }
+            _ = InterruptWhenAllowed(waitFor);
+        }
+
+        /// <summary>Waits until the step <paramref name="waitFor"/> (if any) and any protected step are over, then interrupts.</summary>
+        private async Task InterruptWhenAllowed(object waitFor) {
+            try {
+                while (pauseRequested != PauseKind.None && !stopRequested && nightActive && !inEnd
+                       && (hardware.InProtectedStep() || (waitFor != null && ReferenceEquals(hardware.CurrentStep(), waitFor)))) {
+                    await StepPoll(TimeSpan.FromMilliseconds(250), CancellationToken.None);
+                }
+                lock (gate) {
+                    if (pauseRequested == PauseKind.None || stopRequested || !nightActive || inEnd || waitingForTarget) { return; }
+                    pauseRequested = PauseKind.Now; // the step is over: nothing more is lost by stopping now
+                    interrupt.Cancel();
+                }
+            } catch (Exception ex) {
+                log.Info($"Pause could not interrupt the running step: {ex.Message}");
             }
         }
 
@@ -163,10 +249,13 @@ namespace NINA.ObservatoryPlanner.Core {
             return s.Connected && s.IsSafe;
         }
 
-        private async Task Stage(StageKind kind, CancellationToken token) {
+        private async Task Stage(StageKind kind, CancellationToken token, int? continueFrom = null) {
             if (kind == StageKind.End) { inEnd = true; }
             try {
-                await hardware.RunStage(kind, token);
+                if (continueFrom is int done) { await hardware.ContinueStage(kind, done, token); } else { await hardware.RunStage(kind, token); }
+            } catch (Exception) when (kind == StageKind.Begin && pauseRequested == PauseKind.Now && !stopRequested) {
+                beginDone = hardware.FinishedSteps(StageKind.Begin); // Start sequence continues 1 Begin from the next step
+                throw;
             } finally {
                 if (kind == StageKind.End) { inEnd = false; }
             }
@@ -197,11 +286,24 @@ namespace NINA.ObservatoryPlanner.Core {
                 }
                 log.Phase(PlannerPhase.Begin, "1 Begin (after the weather, still paused)");
                 await Stage(StageKind.Begin, token);
-                return PauseHere(resume, "Paused: safe again and powered up; press Start sequence to continue");
+                return PauseHere(resume == null ? null : resume with { BeginDone = null, MountRaHours = null, MountDecDeg = null },
+                    "Paused: safe again and powered up; press Start sequence to continue");
             }
 
             var skipBegin = false;
-            if (start == StartKind.Resume) {
+            var reopen = false;
+            int? resumeBegin = null;
+            if (start == StartKind.Resume && resume?.BeginDone is int done) {
+                // paused during 1 Begin: it continues from the next step (it connects the devices itself)
+                if (options.RunMode == RunMode.WithSafety && !IsSafe()) {
+                    log.Info("Resume: it is unsafe now, so 4 End runs first");
+                    log.Phase(PlannerPhase.End, "4 End (unsafe)");
+                    await Stage(StageKind.End, token);
+                    resume = null;
+                } else {
+                    resumeBegin = done;
+                }
+            } else if (start == StartKind.Resume) {
                 var missing = await hardware.CheckConnections(token);
                 if (missing.Count > 0) {
                     PausedReason = "Not connected: " + string.Join(", ", missing) + ". Connect them and press Start sequence again.";
@@ -219,17 +321,19 @@ namespace NINA.ObservatoryPlanner.Core {
             }
 
             if (options.RunMode == RunMode.WithoutSafety) {
-                if (!skipBegin && NothingTonight()) {
+                if (!skipBegin && resumeBegin == null && NothingTonight()) {
                     log.Phase(PlannerPhase.Finished, "Finished: nothing to image tonight, so 1 Begin and 4 End did not run");
                     return RunOutcome.Finished;
                 }
-                var r = await RunNight(token, watchSafety: false, skipBegin, resume);
-                return Outcome(r, "Finished: all targets are done and 4 End has run");
+                var r = await RunNight(token, watchSafety: false, skipBegin, resume, resumeBegin);
+                return Outcome(r, r == NightResult.StoppedForNight
+                    ? "Stopped for the night: the guide star was lost and 4 End has run"
+                    : "Finished: all targets are done and 4 End has run");
             }
 
             while (true) {
                 token.ThrowIfCancellationRequested();
-                if (!skipBegin) {
+                if (!skipBegin && resumeBegin == null) {
                     if (!IsSafe()) {
                         log.Phase(PlannerPhase.WaitingForSafe, "Waiting for the safety monitor to report safe");
                         while (!IsSafe()) {
@@ -249,10 +353,30 @@ namespace NINA.ObservatoryPlanner.Core {
                         continue;
                     }
                 }
-                var result = await RunNight(token, watchSafety: true, skipBegin, resume);
+                var result = await RunNight(token, watchSafety: true, skipBegin, resume, resumeBegin, reopen);
                 skipBegin = false;
+                resumeBegin = null;
                 resume = null;
+                reopen = false;
+                if (result == NightResult.ClosedUp) {
+                    var after = await WaitClosedUp(token);
+                    if (after == CloseUpEnd.Stopped) { return RunOutcome.Stopped; }
+                    if (after == CloseUpEnd.Reopen) { skipBegin = true; reopen = true; continue; }
+                    if (after == CloseUpEnd.NightOver) { await WaitForNextNight(token); if (stopRequested) { return Stopped(); } }
+                    continue;
+                }
                 if (result is NightResult.Paused or NightResult.Stopped) { return Outcome(result, null); }
+                if (result == NightResult.StoppedForNight) {
+                    // the guide star was lost: no more imaging tonight, also when it stays safe
+                    var nextNight = NightTime.NightEnd(clock.Now);
+                    log.Phase(PlannerPhase.WaitingForNextNight, $"Stopped for tonight: the guide star was lost. Starts again after {nextNight:dd MMM HH:mm}");
+                    while (clock.Now < nextNight) {
+                        if (stopRequested) { return Stopped(); }
+                        var left = nextNight - clock.Now;
+                        await clock.Delay(left < WaitPoll ? left : WaitPoll, token);
+                    }
+                    continue;
+                }
                 if (result == NightResult.Finished) {
                     // Nothing left tonight. Stay shut down until the monitor reports unsafe (dawn), then wait for the next night.
                     log.Phase(PlannerPhase.WaitingForNextNight, "Nothing left tonight. Waiting for the next night");
@@ -280,9 +404,71 @@ namespace NINA.ObservatoryPlanner.Core {
         private RunOutcome PauseHere(PausePoint point, string message) {
             var mount = hardware.MountPosition();
             Paused = new PausePoint(point?.TargetId ?? current?.Id, point?.TargetName ?? current?.Name,
-                mount?.RaHours ?? point?.MountRaHours, mount?.DecDeg ?? point?.MountDecDeg, clock.Now);
+                mount?.RaHours ?? point?.MountRaHours, mount?.DecDeg ?? point?.MountDecDeg, clock.Now,
+                point != null ? point.BeginDone : beginDone,
+                point != null ? point.ImagingStarted : current != null && hardware.ImagingStarted(current));
             log.Phase(PlannerPhase.Paused, message, current);
             return RunOutcome.Paused;
+        }
+
+        private enum CloseUpEnd { Reopen, Ended, NightOver, Stopped }
+
+        /// <summary>The morning: the sun has risen above "image only while the sun is below".</summary>
+        private bool Morning() => clock.Now.Hour < 12 && !selector.IsDark(clock.Now);
+
+        /// <summary>
+        /// Closed up for the weather, power and camera cooling on. Opens up again when it is safe (after the wait after
+        /// safe); runs 4 End when it is still unsafe after the time limit, when the night ends or nothing is left tonight,
+        /// or on Stop.
+        /// </summary>
+        private async Task<CloseUpEnd> WaitClosedUp(CancellationToken token) {
+            var deadline = clock.Now + TimeSpan.FromHours(options.CloseUpMaxHours);
+            string Waiting() => $"Closed up for the weather: waiting for safe. Power and camera cooling stay on; 4 End runs at {deadline:HH:mm} or at the end of the night if it is still unsafe";
+            log.Phase(PlannerPhase.ClosedUp, Waiting());
+            while (true) {
+                if (stopRequested) {
+                    log.Phase(PlannerPhase.End, "4 End (stopped)");
+                    await Stage(StageKind.End, token);
+                    log.Phase(PlannerPhase.Stopped, "Stopped: 4 End has run");
+                    return CloseUpEnd.Stopped;
+                }
+                var over = Morning() ? "the night has ended" : NothingTonight() ? "nothing left to image tonight" : null;
+                var why = over ?? (clock.Now >= deadline ? $"still unsafe after {options.CloseUpMaxHours:0.##} h" : null);
+                if (why != null) {
+                    log.Phase(PlannerPhase.End, $"4 End ({why})");
+                    await Stage(StageKind.End, token);
+                    return over != null ? CloseUpEnd.NightOver : CloseUpEnd.Ended;
+                }
+                if (IsSafe()) {
+                    if (await StaysSafe(token)) { return CloseUpEnd.Reopen; }
+                    log.Phase(PlannerPhase.ClosedUp, Waiting());
+                    continue;
+                }
+                log.Status($"{Waiting()} ({Countdown(deadline - clock.Now)} left)");
+                await clock.Delay(SafetyPoll, token);
+            }
+        }
+
+        /// <summary>After the night is over: stay off until the next night starts (local noon).</summary>
+        private async Task WaitForNextNight(CancellationToken token) {
+            var nextNight = NightTime.NightEnd(clock.Now);
+            log.Phase(PlannerPhase.WaitingForNextNight, $"The night is over. Starts again after {nextNight:dd MMM HH:mm}");
+            while (clock.Now < nextNight && !stopRequested) {
+                var left = nextNight - clock.Now;
+                await clock.Delay(left < WaitPoll ? left : WaitPoll, token);
+            }
+        }
+
+        /// <summary>Why Start sequence continues with another target than the paused one.</summary>
+        private string ResumeChange(PausePoint p) {
+            var paused = p.TargetId == null ? null : targets().FirstOrDefault(x => x.Id == p.TargetId);
+            var name = p.TargetName ?? "the paused target";
+            if (p.TargetId == null) { return "paused between targets"; }
+            if (paused == null) { return $"{name} was removed from the list"; }
+            if (!paused.Enabled) { return $"{name} was turned off"; }
+            if (paused.IsComplete) { return $"{name} is complete"; }
+            if (!selector.IsOpenAt(paused, clock.Now)) { return $"{name} is outside its time window"; }
+            return $"another target now comes before {name}";
         }
 
         private bool NothingTonight() => selector.Decide(targets(), clock.Now, new HashSet<Guid>()).Kind == DecisionKind.NothingTonight;
@@ -298,7 +484,11 @@ namespace NINA.ObservatoryPlanner.Core {
                     return false;
                 }
                 var left = until - clock.Now;
-                await clock.Delay(left < SafetyPoll ? left : SafetyPoll, token);
+                log.Status($"Safe: 1 Begin starts in {Countdown(left)} if it stays safe");
+                // at most a second, so the countdown moves every second
+                var step = left < SafetyPoll ? left : SafetyPoll;
+                if (step > TimeSpan.FromSeconds(1)) { step = TimeSpan.FromSeconds(1); }
+                await clock.Delay(step, token);
             }
             if (!IsSafe()) { log.Info("Unsafe again during the wait after safe: waiting for safe again"); return false; }
             return true;
@@ -314,7 +504,7 @@ namespace NINA.ObservatoryPlanner.Core {
             return Math.Acos(Math.Max(-1, Math.Min(1, cos))) / D2R <= MountMovedDegrees;
         }
 
-        private async Task<NightResult> RunNight(CancellationToken token, bool watchSafety, bool skipBegin = false, PausePoint resume = null) {
+        private async Task<NightResult> RunNight(CancellationToken token, bool watchSafety, bool skipBegin = false, PausePoint resume = null, int? resumeBegin = null, bool reopen = false) {
             CancellationTokenSource interruptNow;
             lock (gate) { interruptNow = interrupt; }
             using var night = CancellationTokenSource.CreateLinkedTokenSource(token, interruptNow.Token);
@@ -332,15 +522,35 @@ namespace NINA.ObservatoryPlanner.Core {
             }) : Task.CompletedTask;
 
             var skipTonight = new HashSet<Guid>();
+            var guideLostStop = false;
             IReadOnlyList<GapStep> gapResume = null;
             current = null;
+            beginDone = null;
+            nightActive = true;
+            var beginComplete = skipBegin && resumeBegin == null;
             try {
-                if (!skipBegin) {
+                if (resumeBegin is int done) {
+                    log.Phase(PlannerPhase.Begin, $"1 Begin (continuing from step {done + 1})");
+                    await Stage(StageKind.Begin, night.Token, done);
+                } else if (!skipBegin) {
                     log.Phase(PlannerPhase.Begin, "1 Begin");
                     await Stage(StageKind.Begin, night.Token);
                 }
+                beginComplete = true;
+                if (reopen) {
+                    log.Phase(PlannerPhase.ClosedUp, "Safe again: opening the dome and unparking");
+                    if (!await hardware.Reopen(night.Token)) {
+                        log.Info("Opening up after the weather failed: 4 End runs");
+                        nightActive = false;
+                        night.Cancel();
+                        log.Phase(PlannerPhase.End, "4 End (opening up failed)");
+                        await Stage(StageKind.End, token);
+                        return stopRequested ? NightStopped() : NightResult.Unsafe;
+                    }
+                }
 
                 while (true) {
+                    waitingForTarget = false;
                     night.Token.ThrowIfCancellationRequested();
                     if (PausePending) { return await PauseNight(); }
                     var d = selector.Decide(targets(), clock.Now, skipTonight);
@@ -358,15 +568,31 @@ namespace NINA.ObservatoryPlanner.Core {
                         current = t;
                         bool CanFrame(PlannerExposure e) => FrameAllowed() && selector.CanStartFrame(t, clock.Now, TimeSpan.FromSeconds(e.ExposureTime) + FrameOverhead);
                         int frames;
-                        {
-                            if (resume != null && resume.TargetId == t.Id && MountStillAt(resume)) {
+                        try {
+                            if (resume != null && resume.TargetId == t.Id && resume.ImagingStarted && MountStillAt(resume)) {
                                 log.Phase(PlannerPhase.Imaging, $"Resume: {t.Name}, mount where it was; restarting guiding", t);
                                 frames = await hardware.ResumeTarget(t, CanFrame, night.Token);
                             } else {
-                                if (resume != null) { log.Info(resume.TargetId == t.Id ? $"Resume: the mount moved; 2 Start of target runs for {t.Name}" : $"Resume: {t.Name} is next now; 2 Start of target runs"); }
-                                log.Phase(PlannerPhase.Imaging, $"2 Start of target: {t.Name}", t);
+                                var why = resume == null ? null
+                                    : resume.TargetId != t.Id ? $"Resume: {ResumeChange(resume)}; continuing with {t.Name}. "
+                                    : !resume.ImagingStarted ? $"Resume: 2 Start of target had not finished; it runs again for {t.Name}. "
+                                    : $"Resume: the mount moved; 2 Start of target runs again for {t.Name}. ";
+                                if (why != null) { log.Info(why.Trim()); }
+                                log.Phase(PlannerPhase.Imaging, $"{why}2 Start of target: {t.Name}", t);
                                 frames = await hardware.RunTarget(t, CanFrame, night.Token);
                             }
+                        } catch (GuideStarLostException) when (!night.Token.IsCancellationRequested) {
+                            resume = null;
+                            current = null;
+                            if (PausePending) { return await PauseNight(); }
+                            if (options.GuideLostAction == GuideLostAction.NextTarget) {
+                                skipTonight.Add(t.Id);
+                                log.Info($"{t.Name}: the guide star was not found again; going to the next target (skipped for the rest of tonight)");
+                                continue;
+                            }
+                            log.Info($"{t.Name}: the guide star was not found again; 4 End runs and imaging stops for tonight");
+                            guideLostStop = true;
+                            break;
                         }
                         resume = null;
                         if (PausePending) { return await PauseNight(); }
@@ -382,6 +608,7 @@ namespace NINA.ObservatoryPlanner.Core {
 
                     if (d.Kind == DecisionKind.WaitUntil) {
                         current = null;
+                        waitingForTarget = true;
                         var wait = d.At - clock.Now;
                         if (gapResume == null && wait > TimeSpan.FromMinutes(options.GapMinutes)) {
                             var plan = GapPlan.For(options.GapMount, options.GapCloseDome);
@@ -391,7 +618,8 @@ namespace NINA.ObservatoryPlanner.Core {
                         } else {
                             log.Phase(PlannerPhase.WaitingBetweenTargets, $"Waiting for {d.Target.Name} at {d.At:HH:mm}", d.Target);
                         }
-                        var wakeAt = gapResume != null ? d.At - TimeSpan.FromMinutes(options.GapLeadMinutes) : d.At;
+                        // the target starts at its set time: the steps after a long wait (unpark, open the dome) run then too
+                        var wakeAt = d.At;
                         if (gapResume != null && clock.Now >= wakeAt) {
                             await hardware.RunGapSteps(gapResume, night.Token);
                             gapResume = null;
@@ -403,10 +631,12 @@ namespace NINA.ObservatoryPlanner.Core {
                         // wake up early for a pause or stop
                         var slept = TimeSpan.Zero;
                         while (slept < sleep && !PausePending && !stopRequested) {
+                            log.Status($"Waiting for {d.Target.Name} at {d.At:HH:mm} (in {Countdown(d.At - clock.Now)})");
                             var step = sleep - slept < TimeSpan.FromSeconds(1) ? sleep - slept : TimeSpan.FromSeconds(1);
                             await clock.Delay(step, night.Token);
                             slept += step;
                         }
+                        waitingForTarget = false;
                         if (gapResume != null && PausePending) { await hardware.RunGapSteps(gapResume, night.Token); gapResume = null; }
                         if (stopRequested) { interruptNow.Cancel(); night.Token.ThrowIfCancellationRequested(); }
                         continue;
@@ -415,29 +645,25 @@ namespace NINA.ObservatoryPlanner.Core {
                     break; // nothing left tonight
                 }
 
+                nightActive = false;
                 night.Cancel(); // stop the watchdog: shutting down because we are done, not because of the weather
-                log.Phase(PlannerPhase.End, "4 End (finished)");
+                log.Phase(PlannerPhase.End, guideLostStop ? "4 End (guide star lost)" : "4 End (finished)");
                 await Stage(StageKind.End, token);
-                return stopRequested ? NightStopped() : NightResult.Finished;
+                return stopRequested ? NightStopped() : guideLostStop ? NightResult.StoppedForNight : NightResult.Finished;
             } catch (Exception) when (unsafeHit && !token.IsCancellationRequested) {
                 // Interrupted by the weather. NINA instructions may surface this as a cancellation or as their own error.
-                log.Phase(PlannerPhase.End, "4 End (unsafe)");
-                await Stage(StageKind.End, token);
-                if (stopRequested) { return NightStopped(); }
-                return NightResult.Unsafe;
+                return await ShutForWeather();
             } catch (Exception) when (stopRequested && !token.IsCancellationRequested) {
                 log.Phase(PlannerPhase.End, "4 End (stopped)");
                 await Stage(StageKind.End, token);
                 return NightStopped();
             } catch (Exception) when (pauseRequested == PauseKind.Now && !token.IsCancellationRequested) {
                 // Pause now: the frame being taken was dropped.
-                if (watchSafety && !IsSafe()) {
-                    log.Phase(PlannerPhase.End, "4 End (unsafe)");
-                    await Stage(StageKind.End, token);
-                    return NightResult.Unsafe;
-                }
+                if (watchSafety && !IsSafe()) { return await ShutForWeather(); }
                 return await PauseNight();
             } finally {
+                nightActive = false;
+                waitingForTarget = false;
                 night.Cancel();
                 try { await watchdog; } catch (OperationCanceledException) { }
             }
@@ -451,6 +677,20 @@ namespace NINA.ObservatoryPlanner.Core {
                 await hardware.StopGuiding(token);
                 PauseHere(null, current == null ? "Paused" : $"Paused on {current.Name}: guiding stopped; tracking, dome and power stay on");
                 return NightResult.Paused;
+            }
+
+            // Unsafe: close up and wait (the option, once 1 Begin has finished), otherwise 4 End
+            async Task<NightResult> ShutForWeather() {
+                nightActive = false;
+                if (watchSafety && options.UnsafeAction == UnsafeAction.CloseUpAndWait && beginComplete && !stopRequested) {
+                    log.Phase(PlannerPhase.ClosedUp, "Unsafe: closing up (stop guiding, park, close the dome); power and camera cooling stay on");
+                    if (await hardware.CloseUp(token)) { return NightResult.ClosedUp; }
+                    log.Info("Closing up failed (park or dome): 4 End runs instead");
+                }
+                log.Phase(PlannerPhase.End, "4 End (unsafe)");
+                await Stage(StageKind.End, token);
+                if (stopRequested) { return NightStopped(); }
+                return NightResult.Unsafe;
             }
 
             NightResult NightStopped() {

@@ -51,6 +51,21 @@ namespace NINA.ObservatoryPlanner.Core {
                         ? $"\"{early.Name}\" needs equipment, but nothing in this stage connects it. Add \"Connect All Equipment\"."
                         : $"\"{early.Name}\" runs before equipment is connected. Move it below \"{items[firstConnect].Name}\".");
                 }
+                if (!items.Any(i => i.TypeName == "UnparkScope")) {
+                    warnings.Add("Nothing in this stage unparks the mount. 4 End parks it, and some mount programs (e.g. GS Server) start parked: a parked mount can't slew. Add \"Unpark Scope\" at the end of 1 Begin.");
+                }
+                if (!options.Keeps("Switch")) {
+                    var hub = items.ToList().FindIndex(i => i.TypeName == "ConnectAllEquipment" || (i.TypeName == "ConnectEquipment" && i.Device == "Switch"));
+                    var firstSet = items.ToList().FindIndex(i => i.TypeName == "SetSwitchValue");
+                    if (firstSet >= 0 && (hub < 0 || firstSet < hub)) {
+                        warnings.Add("\"Set Switch Value\" runs before the switch hub is connected, so it fails. Add \"Connect Equipment\" (Switch) above it, or keep the switch hub connected (⚙ Options › Keep connected).");
+                    }
+                }
+            }
+            if (stage == StageKind.Triggers && items.Any(i => i.TypeName == "AutofocusAfterFilterChange")) {
+                warnings.Add(items.Any(i => i.TypeName == PlannerAfTrigger)
+                    ? "NINA's \"AF After Filter Change\" and \"AF after filter change (planner)\" are both here, so a filter change can focus twice. Remove NINA's."
+                    : "NINA's \"AF After Filter Change\" compares with the filter of the last autofocus, and can miss the first filter change after a new target, a pause or a weather stop. Use \"AF after filter change (planner)\" instead.");
             }
             if (stage == StageKind.End) {
                 var firstDisconnect = items.ToList().FindIndex(i => i.IsDisconnect);
@@ -62,13 +77,16 @@ namespace NINA.ObservatoryPlanner.Core {
             return warnings;
         }
 
-        /// <summary>Rotating filters with "AF After Filter Change" focuses before almost every frame.</summary>
+        /// <summary>Type name of the planner's own filter-change autofocus trigger.</summary>
+        public const string PlannerAfTrigger = "PlannerAutofocusOnFilterChange";
+
+        /// <summary>Rotating filters with an autofocus-after-filter-change trigger focuses before almost every frame.</summary>
         public static string RotateWithFilterAf(IEnumerable<PlannerTarget> targets, IReadOnlyList<StageEntry> triggers) {
-            if (!triggers.Any(t => t.TypeName == "AutofocusAfterFilterChange")) { return null; }
+            if (!triggers.Any(t => t.TypeName is "AutofocusAfterFilterChange" or PlannerAfTrigger)) { return null; }
             var affected = targets.Where(t => t.Enabled && t.Order == ExposureOrder.RotateThroughFilters
                 && t.Exposures.Where(e => e.Enabled).Select(e => e.Filter).Distinct().Count() > 1).Select(t => t.Name).ToList();
             if (affected.Count == 0) { return null; }
-            return $"\"AF After Filter Change\" will run autofocus before almost every frame for targets that rotate through filters: {string.Join(", ", affected)}. Use \"Finish each row first\", or replace it with AF After Temperature Change or AF After HFR Increase.";
+            return $"Autofocus after filter change will run autofocus before almost every frame for targets that rotate through filters: {string.Join(", ", affected)}. Use \"Finish each row first\", or replace it with AF After Temperature Change or AF After HFR Increase.";
         }
     }
 }

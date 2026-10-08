@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+Fixes and improvements from the first test nights.
+
+- **4 End always runs when a step stops NINA's sequence.** An instruction that fails with the error behaviour "Skip to end of sequence instructions" or "Abort" used to stop the planner without 4 End, leaving the observatory powered and open. Now 4 End runs and the run stops with the reason shown.
+- **Failed 4 End steps are shown** in the panel (for example a power switch or Warm Camera that failed) until 4 End runs again.
+- **1 Begin connects the switch hub** before the power switches in the built-in workflows, and the stage check warns when a Set Switch Value runs before the hub is connected.
+- **Countdowns**: "Safe: 1 Begin starts in 0:42" during the wait after safe, and the time left while waiting for the next target.
+- **Targets start at their set time.** After a long wait between targets the mount was unparked and the dome opened 5 minutes early; this now happens at the target's start time.
+- **Exposure type** per row: Light, Dark, Bias, Flat or Dark flat (saved as DARK, as NINA 3 does). The Gain column is gone: frames use the camera's gain from NINA's camera settings or the driver. Target lists from 1.0 still load.
+- **Guide star lost** (⚙ Options): when PHD2 loses the guide star during a light frame for more than 10 s, the frame is dropped (and taken again later) and the planner waits up to 60 s, counted from the loss, for PHD2 to find the star again. If it doesn't, it either runs 4 End and stops for the night (the default; with a safety monitor it starts again the next night) or goes to the next target (4 End runs when there is none). Unsafe weather during the wait is handled as usual.
+- **Guiding error check** (⚙ Options, off by default): a limit in guide camera pixels, also shown in arcseconds from PHD2's pixel scale. A light frame starts only when the guiding error (the total over the last 10 guide steps; dithers don't count) is below the limit, waiting up to 120 s and then starting anyway. A frame is restarted when the error stays above the limit for 10 s, except one started because the wait ran out.
+- **Close PHD2 and the mount software on disconnect** (⚙ Options › When disconnecting, both on by default). While NINA's sequence runs, Disconnect Equipment (Guider, Mount) and Disconnect All Equipment, wherever they are, now also make PHD2 disconnect its own guide camera and mount and close, and let the mount's ASCOM program (e.g. GS Server) close: PHD2 lets go of the mount first, then the program exits by itself. If it is still open after 30 s (another program uses it), it is left open and a note is shown. NINA's disconnect alone left PHD2 open with its equipment connected, which also kept GS Server running.
+- **Info (!) next to the ⚙ gear:** explains when changes made during a run are used (stages, the temporary target block in the Advanced Sequencer, targets, options) and where sections added in the Advanced Sequencer run.
+- **One Pause for the whole run**, now in the status bar next to Run/Stop. **Pause now** stops whatever is running (a frame is dropped; a slew, centering, autofocus, a wait or 1 Begin is interrupted), except a meridian flip, the dome shutter, park and the steps between targets, which finish first. **Pause after this step** lets the frame or instruction running now finish. Pause is available from the start of 1 Begin until 4 End starts; while waiting for safe or for the next night use Stop and Run.
+- **Start sequence** continues an interrupted 1 Begin from the step it stopped at, runs 2 Start of target again if it was interrupted (or the mount moved), and uses the targets and settings as they are now; when it continues with another target the status says why (turned off, complete, outside its time window).
+- **Close up and wait on clouds** (⚙ Options › Weather, with a safety monitor; off by default). When it turns unsafe during the night (after 1 Begin), the planner stops guiding, parks and closes the dome, but keeps power, connections and camera cooling on. When it is safe again (after the wait after safe) it opens the dome, unparks, autofocuses before the first frame and continues with 2 Start of target, without 1 Begin and the cool-down. 4 End runs if it is still unsafe after the time limit (default 2 h), when the night ends (the sun above "image only while the sun is below", or nothing left tonight), whichever comes first, on Stop, or at once if park or closing the dome fails.
+- **Exposure columns** are now Priority, Run, Type, Filter, Exposure (s), Binning, Repeat, Progress (Count is renamed Repeat).
+- **Target list icons:** ▶ Imaging (the run is on the target now), ‖ Paused (checked, not being imaged; orange when the run is paused on it), ■ Stopped (unchecked, or no exposures to take), ✔ Complete. Hover over an icon for the word. Before, ▶ marked the next target even when nothing was running, and ‖ meant unchecked.
+- **Slew now / Center now** offers to unpark a parked mount first, and the 1 Begin check warns when nothing in it unparks the mount (GS Server, for example, starts parked and refuses to slew).
+- **▶ marks the exposure row** being imaged.
+- **Pause is disabled while 4 End runs**, which always runs to the end.
+- **The last workflow shows in the Advanced Sequencer at startup.** It was loaded, but NINA's Sequencer tab stayed on its overview page.
+- **Target Settings:** start and end altitude and clock time are both editable and follow each other; the value edited last is the one used.
+- **Rotation from the Framing Assistant** is taken into the target (it was always 0 when adding a single framed target).
+- **Autofocus before the first frame after 1 Begin** (⚙ Options, on by default): after the equipment was off (the start of the night, after clouds) the focus is found again before the first light frame, once the target is centred and guiding.
+- **AF after filter change (planner)**, a new trigger for 3 While imaging, replaces NINA's "AF After Filter Change" in the built-in workflows. It focuses before a light frame whose filter differs from the previous light frame, also after a new target, a pause or a weather stop; dark, bias and flat frames are ignored. NINA's trigger compares with the filter of the last autofocus and could miss these; the panel suggests the swap when it finds NINA's trigger in stage 3. A failed autofocus is logged and imaging goes on.
+
 ## 1.0.0.0
 
 First release, for N.I.N.A. 3.2.0.9001 and later.

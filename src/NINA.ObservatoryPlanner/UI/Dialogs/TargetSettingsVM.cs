@@ -7,6 +7,7 @@ using NINA.Sequencer.SequenceItem.Platesolving;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
@@ -14,8 +15,9 @@ using System.Windows.Input;
 namespace NINA.ObservatoryPlanner.UI.Dialogs {
 
     /// <summary>
-    /// "Start at" / "End at" row of the Target Settings: driven by altitude or by clock time (the ° alt / 🕑 time
-    /// button picks which). The other value is shown for tonight, calculated from the target's coordinates.
+    /// "Start at" / "End at" row of the Target Settings. Altitude and clock time are linked: editing one recalculates the
+    /// other for tonight from the target's coordinates. The one edited last is the constraint the planner uses
+    /// (the ° alt / 🕑 time button shows and switches it): an altitude follows the target on other nights, a clock time doesn't.
     /// </summary>
     public sealed class ConstraintRow : Observable {
         private readonly TargetSettingsVM owner;
@@ -30,38 +32,49 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
             altitudeText = Constraint.Altitude.ToString("0.#", CultureInfo.CurrentCulture);
             timeText = Constraint.Time.ToString(@"hh\:mm");
             Toggle = new Command(() => { ByAltitude = !ByAltitude; });
+            Sync();
         }
 
         public TimeConstraint Constraint { get; }
         public string Label => isStart ? "Start at" : "End at";
         public ICommand Toggle { get; }
 
-        public bool Enabled { get => Constraint.Enabled; set { Constraint.Enabled = value; RaiseAll(); } }
-        public bool ByAltitude { get => Constraint.By == ConstraintBy.Altitude; set { Constraint.By = value ? ConstraintBy.Altitude : ConstraintBy.Time; RaiseAll(); } }
-        public bool AltitudeEditable => Enabled && ByAltitude;
-        public bool TimeEditable => Enabled && !ByAltitude;
+        public bool Enabled { get => Constraint.Enabled; set { Constraint.Enabled = value; Recalculate(); } }
+        public bool ByAltitude { get => Constraint.By == ConstraintBy.Altitude; set { Constraint.By = value ? ConstraintBy.Altitude : ConstraintBy.Time; Recalculate(); } }
+        public bool AltitudeEditable => Enabled;
+        public bool TimeEditable => Enabled;
         public string ToggleText => ByAltitude ? "° alt" : "🕑 time";
-        public string ToggleTip => ByAltitude ? "Uses altitude. Click to use clock time" : "Uses clock time. Click to use altitude";
+        public string ToggleTip => ByAltitude
+            ? "Uses the altitude (the time is tonight's). Click to use the clock time instead"
+            : "Uses the clock time (the altitude is tonight's). Click to use the altitude instead";
 
         public string AltitudeText {
-            get => ByAltitude ? altitudeText : Counterpart().Altitude;
+            get => altitudeText;
             set {
                 altitudeText = value;
-                if (double.TryParse(value, NumberStyles.Float, CultureInfo.CurrentCulture, out var a)) { Constraint.Altitude = Math.Max(-90, Math.Min(90, a)); }
+                Constraint.By = ConstraintBy.Altitude;
+                if (double.TryParse(value, NumberStyles.Float, CultureInfo.CurrentCulture, out var a)) {
+                    Constraint.Altitude = Math.Max(-90, Math.Min(90, a));
+                    Sync();
+                }
                 RaiseAll();
             }
         }
 
         public string TimeText {
-            get => ByAltitude ? Counterpart().Time : timeText;
+            get => timeText;
             set {
                 timeText = value;
-                if (TimeSpan.TryParse(value, CultureInfo.InvariantCulture, out var t) && t >= TimeSpan.Zero && t < TimeSpan.FromDays(1)) { Constraint.Time = t; }
+                Constraint.By = ConstraintBy.Time;
+                if (TimeSpan.TryParse(value, CultureInfo.InvariantCulture, out var t) && t >= TimeSpan.Zero && t < TimeSpan.FromDays(1)) {
+                    Constraint.Time = t;
+                    Sync();
+                }
                 RaiseAll();
             }
         }
 
-        public string Note => !Enabled ? "" : ByAltitude ? (Counterpart().Time == "" ? "not reached" : "tonight") : "tonight";
+        public string Note => !Enabled ? "" : ByAltitude && timeText == "" ? "not reached tonight" : "tonight";
 
         /// <summary>Sets the row to a clock time picked on the Planning tools chart.</summary>
         public void SetTime(DateTime local) {
@@ -69,21 +82,28 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
             Constraint.By = ConstraintBy.Time;
             Constraint.Time = local.TimeOfDay;
             timeText = Constraint.Time.ToString(@"hh\:mm");
-            if (owner.TryCoordinates(out var ra, out var dec)) {
-                Constraint.Altitude = Math.Round(owner.Night.Altitude(ra, dec, local) * 10) / 10;
-                altitudeText = Constraint.Altitude.ToString("0.#", CultureInfo.CurrentCulture);
-            }
+            Sync();
             RaiseAll();
         }
 
-        private (string Altitude, string Time) Counterpart() {
-            if (!owner.TryCoordinates(out var ra, out var dec)) { return ("", ""); }
+        /// <summary>The coordinates or the constraint changed: recalculates the linked value and refreshes the row.</summary>
+        public void Recalculate() {
+            Sync();
+            RaiseAll();
+        }
+
+        /// <summary>Recalculates the value that is not the constraint (the time from the altitude, or the reverse) for tonight.</summary>
+        private void Sync() {
+            if (!owner.TryCoordinates(out var ra, out var dec)) { return; }
             if (ByAltitude) {
                 var at = owner.Night.TimeAtAltitude(ra, dec, Constraint.Altitude, rising: isStart);
-                return (altitudeText, at?.ToString("HH:mm") ?? "");
+                timeText = at?.ToString("HH:mm") ?? "";
+                if (at is DateTime when) { Constraint.Time = new TimeSpan(when.Hour, when.Minute, 0); }
+            } else {
+                var when = NightTime.At(Constraint.Time, owner.Night.Now);
+                Constraint.Altitude = Math.Round(owner.Night.Altitude(ra, dec, when) * 10) / 10;
+                altitudeText = Constraint.Altitude.ToString("0.#", CultureInfo.CurrentCulture);
             }
-            var when = NightTime.At(Constraint.Time, owner.Night.Now);
-            return (owner.Night.Altitude(ra, dec, when).ToString("0.#", CultureInfo.CurrentCulture), timeText);
         }
 
         public void RaiseAll() {
@@ -166,8 +186,8 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
 
         private void CoordinatesChanged() {
             Raise(nameof(CoordinateError));
-            Start.RaiseAll();
-            End.RaiseAll();
+            Start.Recalculate();
+            End.Recalculate();
             CoordinatesUpdated?.Invoke();
         }
 
@@ -222,7 +242,8 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
 
         private void FromFraming() {
             var framing = planner.Nina.FramingAssistant;
-            var rect = framing?.Rectangle;
+            // the camera rectangle carries the position angle (as NINA's own "Add target to sequence" uses it)
+            var rect = framing?.CameraRectangles?.FirstOrDefault();
             if (framing == null || !framing.RectangleCalculated || rect == null) {
                 Status = "Frame a target in NINA's Framing tab first.";
                 return;
@@ -275,7 +296,20 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
 
         private async Task SlewNow(bool center) {
             if (!TryCoordinates(out var ra, out var dec)) { Status = CoordinateError; return; }
-            if (planner.Nina.Telescope.GetInfo()?.Connected != true) { Status = "Connect the mount first."; return; }
+            var scope = planner.Nina.Telescope.GetInfo();
+            if (scope?.Connected != true) { Status = "Connect the mount first."; return; }
+            if (scope.AtPark) {
+                // a parked mount refuses to slew (GS Server, for example, starts parked)
+                if (!Confirm("Mount is parked", "The mount is parked, and a parked mount can't slew. Unpark it and continue?")) {
+                    Status = "Cancelled: the mount is parked.";
+                    return;
+                }
+                planner.Log.Info("Slew now: the mount was parked; unparking first");
+                if (!await planner.Nina.Telescope.UnparkTelescope(new Progress<ApplicationStatus>(s => Status = s.Status), CancellationToken.None)) {
+                    Status = "The mount could not be unparked.";
+                    return;
+                }
+            }
             var warning = CollisionWarning(ra, dec, DateTime.UtcNow);
             if (warning != null) {
                 planner.Log.Info($"Collision warning before {(center ? "centering" : "slewing")}: {warning}");

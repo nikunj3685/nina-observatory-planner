@@ -18,13 +18,15 @@ The four stages of the night are ordinary Advanced Sequencer instruction sets yo
 
 ## Features
 
-- Target list with start / end by clock time or altitude, rotation, exposure rows with priority, progress saved after every frame
-- Target Settings with Slew now / Center now (with a collision warning for low targets), from Framing Assistant or planetarium
+- Target list with start / end by clock time or altitude (linked: edit one, the other follows), rotation (also from the Framing Assistant), exposure rows (Light, Dark, Bias, Flat, Dark flat) with priority and repeat, progress saved after every frame
+- Target Settings with Slew now / Center now (collision warning for low targets, unparks a parked mount), from Framing Assistant or planetarium
 - Planning tools: 24-hour altitude chart for tonight; click to set the start, right-click to set the end
-- Pause now / Pause after this frame, then Start sequence: checks connections and safety, restarts guiding or slews back as needed
-- Stop runs 4 End; unsafe while paused shuts down and comes back paused
-- Wait after safe, gap handling between targets (keep tracking, park or home), manual autofocus before the next frame
-- Per-profile target lists, workflows and options; the last workflow is reopened at startup; optional auto-start when NINA starts
+- One Pause for the whole run (Pause now / after this step), then Start sequence: continues an interrupted 1 Begin, restarts guiding or runs 2 Start of target again as needed
+- Weather: 4 End on unsafe, or close up and wait (park, close the dome, keep the camera cold) with a time limit; a night setting (sun altitude) keeps imaging out of daylight
+- Guiding: autofocus after 1 Begin and on filter change (planner trigger), guide star lost handling, guiding error check in pixels
+- 4 End always runs when a step stops NINA's sequence; failed 4 End steps are shown; PHD2 and the mount software (e.g. GS Server) close on disconnect
+- Countdowns, wait after safe, gap handling between targets, manual autofocus before the next frame, Info (!) page about editing during a run
+- Per-profile target lists, workflows and options; the last workflow is reopened at startup and shown in the Advanced Sequencer; optional auto-start when NINA starts
 
 ## Requirements
 

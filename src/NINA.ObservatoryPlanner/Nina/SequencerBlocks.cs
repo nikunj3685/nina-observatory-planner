@@ -6,7 +6,9 @@ using NINA.ObservatoryPlanner.Core;
 using NINA.Sequencer.Container;
 using NINA.Sequencer.Container.ExecutionStrategy;
 using NINA.Sequencer.SequenceItem;
+using NINA.Sequencer.SequenceItem.Imaging;
 using NINA.Sequencer.Trigger;
+using NINA.Sequencer.Trigger.Autofocus;
 using NINA.Sequencer.Utility;
 using System;
 using System.Collections.ObjectModel;
@@ -99,6 +101,51 @@ namespace NINA.ObservatoryPlanner.Nina {
     }
 
     /// <summary>
+    /// Autofocus when the filter changes between light frames, for the planner's imaging. Unlike NINA's "AF After Filter
+    /// Change" it compares with the filter of the previous light frame, also across targets, pauses and weather stops,
+    /// and not with the filter of the last autofocus. Dark, bias and flat frames are ignored.
+    /// </summary>
+    [ExportMetadata("Name", PlannerAutofocusOnFilterChange.DisplayName)]
+    [ExportMetadata("Description", "Observatory Planner: autofocus before a light frame whose filter differs from the previous light frame, also after a new target, a pause or a weather stop.")]
+    [ExportMetadata("Icon", "AutoFocusAfterFilterSVG")]
+    [ExportMetadata("Category", "Observatory Planner")]
+    [Export(typeof(ISequenceTrigger))]
+    [JsonObject(MemberSerialization.OptIn)]
+    public class PlannerAutofocusOnFilterChange : SequenceTrigger {
+        public const string DisplayName = "AF after filter change (planner)";
+        private readonly PlannerService planner;
+
+        [ImportingConstructor]
+        public PlannerAutofocusOnFilterChange(PlannerService planner) : base() {
+            this.planner = planner;
+            try {
+                var af = planner?.Factory?.RunAutofocus();
+                if (af != null) { TriggerRunner.Add(af); }
+            } catch (Exception ex) { Logger.Error("Observatory Planner: could not create the autofocus of AF after filter change (planner)", ex); }
+        }
+
+        private PlannerAutofocusOnFilterChange(PlannerAutofocusOnFilterChange cloneMe) : this(cloneMe.planner) {
+            CopyMetaData(cloneMe);
+        }
+
+        public override object Clone() => new PlannerAutofocusOnFilterChange(this);
+
+        public override bool ShouldTrigger(ISequenceItem previousItem, ISequenceItem nextItem) =>
+            nextItem is TakeExposure && planner?.FilterChangeNeedsFocus() == true;
+
+        public override async Task Execute(ISequenceContainer context, IProgress<ApplicationStatus> progress, CancellationToken token) {
+            planner?.Log.Info($"Filter changed from {planner.LastLightFilter}: autofocus before the next frame");
+            try {
+                await TriggerRunner.Run(progress, token);
+            } finally {
+                planner?.MarkFocused();
+            }
+        }
+
+        public override string ToString() => $"Category: {Category}, Item: {nameof(PlannerAutofocusOnFilterChange)}";
+    }
+
+    /// <summary>
     /// The exposures of one target, created while it runs. Picks the next row (finish each row / rotate),
     /// switches filter, takes the frame with NINA's Take Exposure and runs the stage 3 triggers between frames.
     /// </summary>
@@ -122,6 +169,8 @@ namespace NINA.ObservatoryPlanner.Nina {
             ISequenceItem previous = null;
             var failures = 0;
             foreach (var t in Triggers.ToList()) { t.SequenceBlockInitialize(); t.SequenceBlockStarted(); }
+            RememberLastFilter();
+            planner.ImagingTargetId = target.Id; // 2 Start of target ran to its end
             try {
                 while (true) {
                     token.ThrowIfCancellationRequested();
@@ -132,14 +181,6 @@ namespace NINA.ObservatoryPlanner.Nina {
                             ? $"{target.Name}: the window closes before a {e.ExposureTime:0.#} s frame would finish"
                             : $"{target.Name}: pausing before the next frame");
                         break;
-                    }
-
-                    if (planner.TakeAutofocusRequest()) {
-                        var af = planner.Factory.RunAutofocus();
-                        await Ui.Run(() => { foreach (var old in Items.ToList()) { Remove(old); } Add(af); });
-                        planner.Log.Info($"{target.Name}: running the requested autofocus before the next frame");
-                        var ok = await RunItem(af, progress, token);
-                        planner.Log.Info($"{target.Name}: requested autofocus {(ok ? "finished" : "failed")}");
                     }
 
                     var sw = planner.Factory.SwitchFilter(e.Filter);
@@ -155,9 +196,48 @@ namespace NINA.ObservatoryPlanner.Nina {
                         if (!await RunItem(sw, progress, token)) { failures++; }
                         previous = sw;
                     }
+
+                    // autofocus on the frame's filter: the panel's Autofocus button, or the first light frame after 1 Begin
+                    planner.PrepareFrame(e);
+                    var requested = planner.TakeAutofocusRequest();
+                    var afterBegin = planner.TakeFocusAfterBegin(e);
+                    if (requested || afterBegin) {
+                        var why = requested ? "requested autofocus" : "autofocus (first frame after 1 Begin)";
+                        var af = planner.Factory.RunAutofocus();
+                        await Ui.Run(() => { foreach (var old in Items.ToList()) { Remove(old); } if (sw != null) { Add(sw); } Add(af); Add(take); });
+                        planner.Log.Info($"{target.Name}: running the {why} before the next frame");
+                        var ok = await RunItem(af, progress, token);
+                        planner.MarkFocused();
+                        planner.Log.Info($"{target.Name}: {why} {(ok ? "finished" : "failed; imaging goes on with the focus as it is")}");
+                    }
                     await RunTriggers(previous, take, progress, token);
+
+                    var light = e.Type == ExposureType.Light;
+                    var star = planner.Options.GuideLostWatch && light ? new GuiderWatch(planner.GuideStarLost, () => DateTime.Now) : null;
+                    var error = planner.Options.GuidingCheck && light ? new GuiderWatch(planner.GuidingErrorAbove, () => DateTime.Now) : null;
+                    if (star != null && planner.GuideStarLost() && !await WaitForGuideStar(star, token)) { break; }
+                    // after the wait ran out the frame starts anyway and is not restarted for the guiding error (no endless restarts)
+                    if (error != null && planner.GuidingErrorAbove() && !await WaitForGuiding(error, token)) { error = null; }
+
+                    // a pause asked for during the triggers (e.g. a dither) takes effect before the frame, not by aborting it
+                    if (!planner.FrameAllowed) {
+                        planner.Log.Info($"{target.Name}: pausing before the next frame");
+                        break;
+                    }
                     planner.OnFrameStarting(target, e);
-                    if (await RunItem(take, progress, token) && take.Status == SequenceEntityStatus.FINISHED) {
+                    var (taken, dropped) = await TakeFrame(take, star, error, progress, token);
+                    if (dropped == FrameDrop.StarLost) {
+                        planner.Log.Info($"{target.Name}: the guide star was lost during the frame; the frame is dropped and taken again");
+                        previous = take;
+                        if (!await WaitForGuideStar(star, token)) { break; }
+                        continue;
+                    }
+                    if (dropped == FrameDrop.GuidingError) {
+                        planner.Log.Info($"{target.Name}: the guiding error stayed above {planner.Options.GuidingLimitPixels:0.##} px for 10 s; the frame is dropped and taken again");
+                        previous = take;
+                        continue;
+                    }
+                    if (taken) {
                         e.Done++;
                         FramesTaken++;
                         failures = 0;
@@ -178,10 +258,100 @@ namespace NINA.ObservatoryPlanner.Nina {
                     }
                 }
             } finally {
+                planner.OnImagingEnded(target);
                 foreach (var t in Triggers.ToList()) {
                     try { t.SequenceBlockFinished(); t.SequenceBlockTeardown(); } catch (Exception ex) { Logger.Error(ex); }
                 }
             }
+        }
+
+        /// <summary>
+        /// NINA's "AF After Filter Change" starts each time from the filter the wheel is on. The planner creates it anew for
+        /// every target and after every pause or weather stop, and 2 Start of target can move the wheel (plate solving), so
+        /// the first filter change would be missed. It starts from the filter of the last light frame instead.
+        /// </summary>
+        private void RememberLastFilter() {
+            var last = planner.LastLightFilter;
+            if (last == null) { return; }
+            foreach (var af in Triggers.OfType<AutofocusAfterFilterChange>()) { SeedLastFilter(af, last); }
+        }
+
+        /// <summary>Sets the filter "AF After Filter Change" compares with (NINA keeps its setter private). False when that fails.</summary>
+        internal static bool SeedLastFilter(AutofocusAfterFilterChange af, string filter) {
+            try {
+                var setter = typeof(AutofocusAfterFilterChange).GetProperty(nameof(AutofocusAfterFilterChange.LastAutoFocusFilter))?.GetSetMethod(nonPublic: true);
+                if (setter == null) { Logger.Warning("Observatory Planner: AF After Filter Change has no LastAutoFocusFilter setter"); return false; }
+                setter.Invoke(af, new object[] { filter });
+                return true;
+            } catch (Exception ex) {
+                Logger.Error(ex);
+                return false;
+            }
+        }
+
+        private enum FrameDrop { None, StarLost, GuidingError }
+
+        /// <summary>
+        /// Takes the frame. With guider watches, the guider is checked every second and the frame is aborted once the star
+        /// has been lost, or the guiding error has been above the limit, for 10 s. Returns whether the frame was taken and
+        /// why it was dropped.
+        /// </summary>
+        private async Task<(bool Taken, FrameDrop Dropped)> TakeFrame(TakeExposure take, GuiderWatch star, GuiderWatch error, IProgress<ApplicationStatus> progress, CancellationToken token) {
+            if (star == null && error == null) { return (await RunItem(take, progress, token) && take.Status == SequenceEntityStatus.FINISHED, FrameDrop.None); }
+            using var frame = CancellationTokenSource.CreateLinkedTokenSource(token);
+            var dropped = FrameDrop.None;
+            var watcher = Task.Run(async () => {
+                try {
+                    while (!frame.IsCancellationRequested) {
+                        await Task.Delay(TimeSpan.FromSeconds(1), frame.Token);
+                        if (star?.Poll() == true) { dropped = FrameDrop.StarLost; frame.Cancel(); return; }
+                        if (error?.Poll() == true) { dropped = FrameDrop.GuidingError; frame.Cancel(); return; }
+                    }
+                } catch (OperationCanceledException) { }
+            });
+            try {
+                await take.Run(progress, frame.Token);
+                return (take.Status == SequenceEntityStatus.FINISHED, FrameDrop.None);
+            } catch (OperationCanceledException) when (dropped != FrameDrop.None && !token.IsCancellationRequested) {
+                return (false, dropped);
+            } catch (OperationCanceledException) when (token.IsCancellationRequested) {
+                throw;
+            } catch (Exception ex) {
+                Logger.Error($"Observatory Planner: {take.Name} failed", ex);
+                planner.Log.Info($"{take.Name} failed: {ex.Message}");
+                return (false, FrameDrop.None);
+            } finally {
+                if (!frame.IsCancellationRequested) { frame.Cancel(); }
+                try { await watcher; } catch (OperationCanceledException) { }
+            }
+        }
+
+        /// <summary>Waits for the guider to find the star again. False when it did not within the wait (the planner then acts).</summary>
+        private async Task<bool> WaitForGuideStar(GuiderWatch watch, CancellationToken token) {
+            var wait = TimeSpan.FromSeconds(planner.Options.GuideLostWaitSeconds);
+            planner.Log.Info($"{target.Name}: the guide star is lost; waiting up to {wait.TotalSeconds:0} s for the guider to find it again");
+            var found = await watch.WaitUntilGood(wait, (d, t) => Task.Delay(d, t),
+                left => planner.SetStatus($"Guide star lost on {target.Name}: waiting for the guider to find it again ({PlannerEngine.Countdown(left)} left)"), token);
+            if (found) {
+                planner.Log.Info($"{target.Name}: the guide star was found again; imaging goes on");
+                return true;
+            }
+            planner.Log.Info($"{target.Name}: the guide star was not found again within {wait.TotalSeconds:0} s");
+            planner.GaveUpOnGuideStar();
+            return false;
+        }
+
+        /// <summary>Waits for the guiding error to come below the limit. False when the wait ran out (the frame then starts anyway).</summary>
+        private async Task<bool> WaitForGuiding(GuiderWatch watch, CancellationToken token) {
+            var wait = TimeSpan.FromSeconds(planner.Options.GuidingCheckWaitSeconds);
+            var limit = planner.Options.GuidingLimitPixels;
+            planner.Log.Info($"{target.Name}: guiding error {planner.GuidingError():0.##} px is above {limit:0.##} px; waiting up to {wait.TotalSeconds:0} s before the next frame");
+            var good = await watch.WaitUntilGood(wait, (d, t) => Task.Delay(d, t),
+                left => planner.SetStatus($"Guiding error {planner.GuidingError():0.##} px (limit {limit:0.##} px): waiting before the next frame ({PlannerEngine.Countdown(left)} left)"), token);
+            planner.Log.Info(good
+                ? $"{target.Name}: guiding error {planner.GuidingError():0.##} px is below the limit; the frame starts"
+                : $"{target.Name}: the guiding error stayed above {limit:0.##} px for {wait.TotalSeconds:0} s; the frame starts anyway");
+            return good;
         }
 
         /// <summary>Runs one instruction. A failed instruction must not end the night; a cancellation must.</summary>

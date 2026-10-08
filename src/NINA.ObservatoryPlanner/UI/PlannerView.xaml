@@ -317,6 +317,30 @@
                             </Style>
                         </Button.Style>
                     </Button>
+                    <!--  Pause (for the whole run): Pause while running, Pausing while a pause is due, Start sequence while paused  -->
+                    <StackPanel Margin="0,0,10,0" VerticalAlignment="Center" DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button Click="AddButton_Click" Content="⏸  Pause ▾" IsEnabled="{Binding PauseEnabled}" Style="{StaticResource OP_Small}" ToolTip="{Binding PauseTip}" ToolTipService.ShowOnDisabled="True" Visibility="{Binding PauseShown, Converter={StaticResource OP_BoolVisible}}">
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Command="{Binding PauseNowCommand}" Header="Pause now" ToolTip="Stops whatever is running: a frame being taken is dropped; a slew, centering, autofocus, a wait or 1 Begin is interrupted. A meridian flip, the dome shutter and park finish first." />
+                                    <MenuItem Command="{Binding PauseAfterFrameCommand}" Header="Pause after this step" ToolTip="The frame or instruction running now finishes first, then it pauses." />
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+                        <Button Click="AddButton_Click" Content="⏸  Pausing… ▾" Style="{StaticResource OP_Small}" ToolTip="A pause is due: after the current step, or once a meridian flip, the dome shutter or park has finished" Visibility="{Binding PausingShown, Converter={StaticResource OP_BoolVisible}}">
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Command="{Binding PauseNowCommand}" Header="Pause now" ToolTip="Stops whatever is running (a meridian flip, the dome shutter and park finish first)." />
+                                    <MenuItem Command="{Binding CancelPauseCommand}" Header="Cancel the pause" />
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+                        <Button Padding="12,4" Command="{Binding ResumeCommand}" Content="▶  Start sequence" Style="{StaticResource OP_Primary}" ToolTip="Checks the connections and the weather, then continues with the targets and settings as they are now: an interrupted 1 Begin continues from the step it stopped at; on the same target with the mount not moved only guiding restarts; otherwise 2 Start of target runs." Visibility="{Binding IsPaused, Converter={StaticResource OP_BoolVisible}}" />
+                    </StackPanel>
+                    <!--  4 End steps that failed the last time it ran  -->
+                    <Border Margin="0,8,12,0" DockPanel.Dock="Bottom" Style="{StaticResource OP_WarnBox}" Visibility="{Binding EndProblems, Converter={StaticResource OP_TextVisible}}">
+                        <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding EndProblems, StringFormat=⚠ {0}}" />
+                    </Border>
                     <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
                         <Border Padding="10,2" VerticalAlignment="Center" BorderBrush="{Binding PillBrush}" BorderThickness="1" CornerRadius="11">
                             <StackPanel Orientation="Horizontal">
@@ -581,19 +605,30 @@
                                                         <TextBlock.Text>
                                                             <MultiBinding Converter="{StaticResource OP_TargetState}">
                                                                 <Binding />
-                                                                <Binding Path="DataContext.NextTarget" RelativeSource="{RelativeSource AncestorType=ListBox}" />
+                                                                <Binding Path="DataContext.ListState" RelativeSource="{RelativeSource AncestorType=ListBox}" />
                                                                 <Binding Path="Enabled" />
                                                                 <Binding Path="IsComplete" />
+                                                                <Binding Path="TotalFrames" />
                                                             </MultiBinding>
                                                         </TextBlock.Text>
                                                         <TextBlock.Foreground>
                                                             <MultiBinding Converter="{StaticResource OP_TargetState}" ConverterParameter="brush">
                                                                 <Binding />
-                                                                <Binding Path="DataContext.NextTarget" RelativeSource="{RelativeSource AncestorType=ListBox}" />
+                                                                <Binding Path="DataContext.ListState" RelativeSource="{RelativeSource AncestorType=ListBox}" />
                                                                 <Binding Path="Enabled" />
                                                                 <Binding Path="IsComplete" />
+                                                                <Binding Path="TotalFrames" />
                                                             </MultiBinding>
                                                         </TextBlock.Foreground>
+                                                        <TextBlock.ToolTip>
+                                                            <MultiBinding Converter="{StaticResource OP_TargetState}" ConverterParameter="tip">
+                                                                <Binding />
+                                                                <Binding Path="DataContext.ListState" RelativeSource="{RelativeSource AncestorType=ListBox}" />
+                                                                <Binding Path="Enabled" />
+                                                                <Binding Path="IsComplete" />
+                                                                <Binding Path="TotalFrames" />
+                                                            </MultiBinding>
+                                                        </TextBlock.ToolTip>
                                                     </TextBlock>
                                                     <TextBlock Grid.Column="2" Margin="6,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
                                                     <TextBlock Grid.Column="3" VerticalAlignment="Center" FontSize="12" Opacity="0.7" Style="{StaticResource OP_Mono}" Text="{Binding Percent, StringFormat={}{0:0}%}" />
@@ -628,24 +663,6 @@
                                         <DockPanel Margin="0,0,0,10" DockPanel.Dock="Top">
                                             <StackPanel VerticalAlignment="Top" DockPanel.Dock="Right" Orientation="Horizontal">
                                                 <Button Command="{Binding AutofocusCommand}" Content="{Binding AutofocusText}" Style="{StaticResource OP_Small}" ToolTip="Run autofocus before the next frame. The frame being taken now finishes first. Available while a target is imaging." />
-                                                <!--  Pause while running, Pausing while a pause is due, Start sequence while paused  -->
-                                                <Button Click="AddButton_Click" Content="⏸  Pause ▾" Style="{StaticResource OP_Small}" ToolTip="Pause the sequence: everything stays powered and on target" Visibility="{Binding PauseShown, Converter={StaticResource OP_BoolVisible}}">
-                                                    <Button.ContextMenu>
-                                                        <ContextMenu>
-                                                            <MenuItem Command="{Binding PauseNowCommand}" Header="Pause now" ToolTip="Stops at once. The frame being taken is dropped and not counted." />
-                                                            <MenuItem Command="{Binding PauseAfterFrameCommand}" Header="Pause after this frame" ToolTip="The current frame finishes and downloads, then it pauses." />
-                                                        </ContextMenu>
-                                                    </Button.ContextMenu>
-                                                </Button>
-                                                <Button Click="AddButton_Click" Content="⏸  Pausing… ▾" Style="{StaticResource OP_Small}" ToolTip="A pause is due: after the current frame or step" Visibility="{Binding PausingShown, Converter={StaticResource OP_BoolVisible}}">
-                                                    <Button.ContextMenu>
-                                                        <ContextMenu>
-                                                            <MenuItem Command="{Binding PauseNowCommand}" Header="Pause now" ToolTip="Stops at once. The frame being taken is dropped and not counted." />
-                                                            <MenuItem Command="{Binding CancelPauseCommand}" Header="Cancel the pause" />
-                                                        </ContextMenu>
-                                                    </Button.ContextMenu>
-                                                </Button>
-                                                <Button Margin="0,0,6,0" Padding="10,2" Command="{Binding ResumeCommand}" Content="▶  Start sequence" Style="{StaticResource OP_Primary}" ToolTip="Checks the connections and the weather, then continues: same target and mount not moved means guiding restarts and imaging goes on; otherwise 2 Start of target runs first." Visibility="{Binding IsPaused, Converter={StaticResource OP_BoolVisible}}" />
                                                 <Button Margin="0" Command="{Binding TargetSettingsCommand}" CommandParameter="{Binding SelectedTarget}" Content="⚙  Target settings" Style="{StaticResource OP_Small}" />
                                             </StackPanel>
                                             <StackPanel>
@@ -718,6 +735,19 @@
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                                                                <!--  ▶ marks the row being imaged now  -->
+                                                                <TextBlock Width="12" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource OP_Accent}" Text="▶" ToolTip="Being imaged now">
+                                                                    <TextBlock.Style>
+                                                                        <Style TargetType="TextBlock">
+                                                                            <Setter Property="Visibility" Value="Hidden" />
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </TextBlock.Style>
+                                                                </TextBlock>
                                                                 <TextBlock Width="18" Margin="0,0,4,0" VerticalAlignment="Center" Opacity="0.7" Style="{StaticResource OP_Mono}" Text="{Binding (ItemsControl.AlternationIndex), RelativeSource={RelativeSource AncestorType=DataGridRow}, Converter={StaticResource OP_PlusOne}}" TextAlignment="Right" />
                                                                 <Button Width="24" MinHeight="22" Padding="0" Margin="0,0,2,0" Command="{Binding DataContext.ExposureUpCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" Content="▲" FontSize="10" Style="{StaticResource OP_Btn}" ToolTip="Move up (higher priority)" />
                                                                 <Button Width="24" MinHeight="22" Padding="0" Command="{Binding DataContext.ExposureDownCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" Content="▼" FontSize="10" Style="{StaticResource OP_Btn}" ToolTip="Move down (lower priority)" />
@@ -729,6 +759,13 @@
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <CheckBox HorizontalAlignment="Center" IsChecked="{Binding Enabled, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource OP_Check}" ToolTip="Run this row" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTemplateColumn Width="86" Header="Type">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <ComboBox DisplayMemberPath="Label" ItemsSource="{Binding DataContext.ExposureTypeChoices, RelativeSource={RelativeSource AncestorType=DataGrid}}" SelectedValue="{Binding Type}" SelectedValuePath="Value" ToolTip="Image type. Dark flats are saved as DARK (NINA 3 has no separate dark flat type). The camera's gain is used." />
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
@@ -746,13 +783,6 @@
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Width="54" Header="Gain">
-                                                    <DataGridTemplateColumn.CellTemplate>
-                                                        <DataTemplate>
-                                                            <TextBox Text="{Binding Gain, UpdateSourceTrigger=LostFocus}" ToolTip="-1 = camera default" />
-                                                        </DataTemplate>
-                                                    </DataGridTemplateColumn.CellTemplate>
-                                                </DataGridTemplateColumn>
                                                 <DataGridTemplateColumn Width="74" Header="Binning">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
@@ -760,10 +790,10 @@
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Width="62" Header="Count">
+                                                <DataGridTemplateColumn Width="62" Header="Repeat">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
-                                                            <TextBox Text="{Binding Count, UpdateSourceTrigger=LostFocus}" />
+                                                            <TextBox Text="{Binding Count, UpdateSourceTrigger=LostFocus}" ToolTip="How many frames of this row to take" />
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
@@ -1023,6 +1053,88 @@
                                             </StackPanel>
                                             <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="It must stay safe for the whole wait; if it turns unsafe, the wait starts again the next time it is safe. 0 starts at once." />
                                         </StackPanel>
+                                        <CheckBox Margin="0,12,0,0" Content="Autofocus before the first frame after 1 Begin, and after a weather close-up" IsChecked="{Binding Options.AutofocusAfterBegin}" Style="{StaticResource OP_Check}" />
+                                        <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="1 Begin runs after the equipment was off (the start of the night, after clouds), so the focus is found again before the first light frame, once the target is centred and guiding. Filter changes are handled by &quot;AF after filter change (planner)&quot; in 3 While imaging." />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,0,0,12" Style="{StaticResource OP_Box}">
+                                    <StackPanel>
+                                        <TextBlock Margin="0,0,0,6" Style="{StaticResource OP_Heading}" Text="WEATHER" />
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Night: image only while the Sun is below " />
+                                            <TextBox Width="52" Text="{Binding Options.DarkSunAltitude}" />
+                                            <TextBlock VerticalAlignment="Center" Text=" °" />
+                                        </StackPanel>
+                                        <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="This setting defines the night for the planner, and is what keeps it from imaging into daylight:" />
+                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Evening: no target starts before the Sun is below this altitude, even if the target's own start time or altitude has been reached." />
+                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Morning: no frame starts that would end after the Sun rises above it. When no target can run any more, the night is finished and 4 End runs." />
+                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Closed up for the weather: the night has ended when the Sun rises above it in the morning; then 4 End runs." />
+                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• It does not start 1 Begin: with a safety monitor 1 Begin starts when it reports safe; without one the built-in workflows wait for astronomical dusk (Wait for Time in 1 Begin)." />
+                                        <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="Typical values: −12° (nautical twilight) or −18° (fully dark). Don't rely on a lost guide star or a failing plate solve to end the night at dawn; keep this set." />
+                                        <StackPanel Margin="0,12,0,0" Visibility="{Binding WithSafety, Converter={StaticResource OP_BoolVisible}}">
+                                        <TextBlock Margin="0,0,0,4" FontWeight="SemiBold" Text="When it turns unsafe during the night:" />
+                                        <RadioButton Content="Run 4 End (full shutdown: warm the camera, power off)" GroupName="OP_Unsafe" IsChecked="{Binding Options.UnsafeAction, Converter={StaticResource OP_EnumBool}, ConverterParameter=RunEnd}" Style="{StaticResource OP_Radio}" />
+                                        <RadioButton Content="Close up and wait: stop guiding, park, close the dome; power, connections and camera cooling stay on" GroupName="OP_Unsafe" IsChecked="{Binding Options.UnsafeAction, Converter={StaticResource OP_EnumBool}, ConverterParameter=CloseUpAndWait}" Style="{StaticResource OP_Radio}" />
+                                        <StackPanel Margin="23,6,0,0" IsEnabled="{Binding CloseUpOnUnsafe}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock VerticalAlignment="Center" Text="Run 4 End if it is still unsafe after " />
+                                                <TextBox Width="52" Text="{Binding Options.CloseUpMaxHours}" />
+                                                <TextBlock VerticalAlignment="Center" Text=" h, or when the night ends, whichever comes first" />
+                                            </StackPanel>
+                                            <TextBlock Margin="0,6,0,0" Style="{StaticResource OP_Hint}" Text="The night ends when the Sun rises above the Night setting above, or when nothing is left to image tonight. When it is safe again (after the wait after safe): open the dome, unpark, autofocus before the first frame (with the autofocus option on), then 2 Start of target. Close-up starts once 1 Begin has finished; unsafe during 1 Begin runs 4 End. If park or closing the dome fails, 4 End runs at once. Stop while closed up runs 4 End." />
+                                        </StackPanel>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,0,0,12" Style="{StaticResource OP_Box}">
+                                    <StackPanel>
+                                        <TextBlock Margin="0,0,0,6" Style="{StaticResource OP_Heading}" Text="GUIDE STAR LOST" />
+                                        <CheckBox Content="Watch the guide star during light frames (PHD2)" IsChecked="{Binding Options.GuideLostWatch}" Style="{StaticResource OP_Check}" />
+                                        <StackPanel Margin="23,6,0,0" IsEnabled="{Binding Options.GuideLostWatch}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock VerticalAlignment="Center" Text="Wait up to " />
+                                                <TextBox Width="60" Text="{Binding Options.GuideLostWaitSeconds}" />
+                                                <TextBlock VerticalAlignment="Center" Text=" s for PHD2 to find the star again" />
+                                            </StackPanel>
+                                            <TextBlock Margin="0,8,0,4" Text="If it doesn't come back:" />
+                                            <RadioButton Content="Run 4 End and stop for the night" GroupName="OP_GuideLost" IsChecked="{Binding Options.GuideLostAction, Converter={StaticResource OP_EnumBool}, ConverterParameter=StopForNight}" Style="{StaticResource OP_Radio}" />
+                                            <RadioButton Content="Go to the next target (4 End runs if there is none)" GroupName="OP_GuideLost" IsChecked="{Binding Options.GuideLostAction, Converter={StaticResource OP_EnumBool}, ConverterParameter=NextTarget}" Style="{StaticResource OP_Radio}" />
+                                            <TextBlock Margin="0,6,0,0" Style="{StaticResource OP_Hint}" Text="A loss shorter than 10 s is ignored. A longer one drops the frame being taken (it is taken again). The wait counts from when the star was lost. Unsafe weather during the wait is handled as usual: 4 End, then wait for safe." />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,0,0,12" Style="{StaticResource OP_Box}">
+                                    <StackPanel>
+                                        <TextBlock Margin="0,0,0,6" Style="{StaticResource OP_Heading}" Text="GUIDING ERROR" />
+                                        <CheckBox Content="Check the guiding error before and during light frames (PHD2)" IsChecked="{Binding Options.GuidingCheck}" Style="{StaticResource OP_Check}" />
+                                        <StackPanel Margin="23,6,0,0" IsEnabled="{Binding Options.GuidingCheck}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock VerticalAlignment="Center" Text="Limit " />
+                                                <TextBox Width="60" Text="{Binding Options.GuidingLimitPixels}" />
+                                                <TextBlock VerticalAlignment="Center" Text=" px (guide camera pixels)" />
+                                            </StackPanel>
+                                            <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="{Binding GuidingLimitArcsec}" />
+                                            <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
+                                                <TextBlock VerticalAlignment="Center" Text="Before a frame, wait up to " />
+                                                <TextBox Width="60" Text="{Binding Options.GuidingCheckWaitSeconds}" />
+                                                <TextBlock VerticalAlignment="Center" Text=" s for the error to come below the limit, then start anyway" />
+                                            </StackPanel>
+                                            <TextBlock Margin="0,6,0,0" Style="{StaticResource OP_Hint}" Text="The error is the total (RA and Dec) over the last 10 guide steps; dithers are not counted. A frame is restarted when the error stays above the limit for 10 s. A frame started because the wait ran out is not restarted." />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,0,0,12" Style="{StaticResource OP_Box}">
+                                    <StackPanel>
+                                        <TextBlock Margin="0,0,0,6" Style="{StaticResource OP_Heading}" Text="WHEN DISCONNECTING" />
+                                        <CheckBox Content="Close PHD2 when the guider is disconnected" IsChecked="{Binding Options.CloseGuiderAppOnDisconnect}" Style="{StaticResource OP_Check}" />
+                                        <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="PHD2 disconnects its own guide camera and mount, then closes. NINA's disconnect alone leaves PHD2 open with its equipment connected." />
+                                        <CheckBox Margin="0,10,0,0" Content="Close the mount software when the mount is disconnected" IsChecked="{Binding Options.CloseMountAppOnDisconnect}" Style="{StaticResource OP_Check}" />
+                                        <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="For an ASCOM mount program such as GS Server: PHD2 lets go of the mount first, then the program closes by itself. If it is still open after 30 s (another program uses it), it is left open and a note is shown." />
+                                        <TextBlock Margin="0,8,0,0" Style="{StaticResource OP_Hint}" Text="Both work with Disconnect Equipment (Guider, Mount) and Disconnect All Equipment wherever they are in the sequence, while NINA's sequence runs. Disconnecting by hand in NINA's Equipment tab is not affected." />
                                     </StackPanel>
                                 </Border>
 
@@ -1082,12 +1194,6 @@
                                         </UniformGrid>
                                         <TextBlock Margin="0,8,0,0" Style="{StaticResource OP_Hint}" Text="Used when you add a target. Each target can still change its own values on the Targets tab." />
                                         <Button Margin="0,8,0,0" HorizontalAlignment="Left" Command="{Binding ApplyDefaultsToAllCommand}" Content="Apply these to all existing targets" Style="{StaticResource OP_Small}" />
-                                        <StackPanel Margin="0,12,0,0" Orientation="Horizontal">
-                                            <TextBlock VerticalAlignment="Center" Text="Image only while the Sun is below " />
-                                            <TextBox Width="52" Text="{Binding Options.DarkSunAltitude}" />
-                                            <TextBlock VerticalAlignment="Center" Text=" °" />
-                                        </StackPanel>
-                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="A safety monitor that reports unsafe in daylight already does this; set it lower than your monitor's limit (for example −12°) so it never holds imaging back." />
                                     </StackPanel>
                                 </Border>
 
@@ -1175,10 +1281,63 @@
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
+
+                    <!-- =================== INFO (opened with the ! next to the gear) =================== -->
+                    <TabItem Header="Info" Visibility="Collapsed">
+                        <ScrollViewer Margin="0,8,0,0" VerticalScrollBarVisibility="Auto">
+                            <StackPanel MaxWidth="660" HorizontalAlignment="Left">
+                                <Border Margin="0,0,0,12" Style="{StaticResource OP_Box}">
+                                    <StackPanel>
+                                        <TextBlock Margin="0,0,0,4" Style="{StaticResource OP_Heading}" Text="EDITING WHILE A RUN IS GOING" />
+                                        <TextBlock Style="{StaticResource OP_Hint}" Text="You can edit the stages in NINA's Advanced Sequencer and the targets here while the planner runs. This is when each change is used:" />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="1 Begin and 4 End" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="Used the next time the stage runs (for 1 Begin: after the next weather stop or the next night)." />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="2 Start of each target" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="The planner copies this stage when a target starts. A change is used from the next target; the target being imaged has already run it." />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="3 While imaging (triggers)" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="Also copied when a target starts, and again on Start sequence after a pause. A change is used from the next target, or after the next pause." />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="The running target block (e.g. &quot;M31&quot;) in the Advanced Sequencer" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="While a target runs, the planner adds a temporary target block inside the Observatory Planner block. It holds copies of stages 2 and 3 for that target only. Changes made inside it affect only the target running now and are lost when it ends. Edit stages 2 and 3 instead." />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="Targets and exposure rows (this panel)" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="Used right away: the next frame takes the current exposure rows, and the next target is chosen from the current list. Progress is saved after every frame." />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="⚙ Options" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="Used the next time each setting is needed (for example the guiding limit before the next frame). The run mode can only be changed while stopped." />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,0,0,12" Style="{StaticResource OP_Box}">
+                                    <StackPanel>
+                                        <TextBlock Margin="0,0,0,4" Style="{StaticResource OP_Heading}" Text="PAUSE AND START SEQUENCE" />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="When Pause is available" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="From the start of 1 Begin until 4 End starts. While waiting for safe or for the next night nothing is powered: use Stop, and Run when you're ready." />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="Pause now" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="Stops whatever is running: a frame being taken is dropped; a slew, centering, autofocus, a wait or 1 Begin is interrupted. A meridian flip, the dome shutter, park and the steps between targets finish first." />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="Pause after this step" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="The frame or instruction running now finishes first." />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="Start sequence" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="Checks the connections and the weather, then continues with the targets and settings as they are now. An interrupted 1 Begin continues from the step it stopped at. On the same target with the mount not moved only guiding restarts; if 2 Start of target was interrupted or the mount moved, it runs again. If the paused target was turned off, finished or is outside its time window, the next target is taken and the status says why." />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,0,0,12" Style="{StaticResource OP_Box}">
+                                    <StackPanel>
+                                        <TextBlock Margin="0,0,0,4" Style="{StaticResource OP_Heading}" Text="ADDING SECTIONS IN THE ADVANCED SEQUENCER" />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="Inside a stage: yes" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="New instructions and instruction sets belong inside one of the four stages, for example a flats set inside 4 End. They run each time that stage runs; 4 End also runs on every unsafe shutdown." />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="Directly in the Observatory Planner block: no" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="A section placed between the stages (not inside one) does not run and is removed when the run starts. Known issue, on the to-do list." />
+                                        <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="Outside the Observatory Planner block" TextWrapping="Wrap" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="NINA's Start area runs once when NINA's sequence starts, before 1 Begin. Anything after the block or in NINA's End area runs only after the planner stops, when 4 End has already switched the equipment off." />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
                 </TabControl>
 
-                <!--  gear at the right end of the tab row  -->
-                <Button Margin="0,0,4,0" HorizontalAlignment="Right" VerticalAlignment="Top" Command="{Binding GoOptionsCommand}" ToolTip="Options">
+                <!--  gear and ! (info) at the right end of the tab row  -->
+                <StackPanel Margin="0,0,4,0" HorizontalAlignment="Right" VerticalAlignment="Top" Orientation="Horizontal">
+                <Button Command="{Binding GoOptionsCommand}" ToolTip="Options">
                     <Button.Style>
                         <Style BasedOn="{StaticResource OP_Flat}" TargetType="Button">
                             <Setter Property="Padding" Value="8,4" />
@@ -1191,6 +1350,23 @@
                     </Button.Style>
                     <Path Width="20" Height="20" Data="M12,9 A3,3 0 1 1 11.99,9 Z M19.4,15 A1.65,1.65 0 0 0 19.73,16.82 L19.79,16.88 A2,2 0 1 1 16.96,19.71 L16.9,19.65 A1.65,1.65 0 0 0 15.08,19.32 A1.65,1.65 0 0 0 14.08,20.83 V21 A2,2 0 1 1 10.08,21 V20.91 A1.65,1.65 0 0 0 9,19.4 A1.65,1.65 0 0 0 7.18,19.73 L7.12,19.79 A2,2 0 1 1 4.29,16.96 L4.35,16.9 A1.65,1.65 0 0 0 4.68,15.08 A1.65,1.65 0 0 0 3.17,14.08 H3 A2,2 0 1 1 3,10.08 H3.09 A1.65,1.65 0 0 0 4.6,9 A1.65,1.65 0 0 0 4.27,7.18 L4.21,7.12 A2,2 0 1 1 7.04,4.29 L7.1,4.35 A1.65,1.65 0 0 0 8.92,4.68 H9 A1.65,1.65 0 0 0 10,3.17 V3 A2,2 0 1 1 14,3 V3.09 A1.65,1.65 0 0 0 15,4.6 A1.65,1.65 0 0 0 16.82,4.27 L16.88,4.21 A2,2 0 1 1 19.71,7.04 L19.65,7.1 A1.65,1.65 0 0 0 19.32,8.92 V9 A1.65,1.65 0 0 0 20.83,10 H21 A2,2 0 1 1 21,14 H20.91 A1.65,1.65 0 0 0 19.4,15 Z" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeLineJoin="Round" StrokeThickness="1.8" />
                 </Button>
+                <Button Command="{Binding GoInfoCommand}" ToolTip="Info: what happens when you edit while a run is going">
+                    <Button.Style>
+                        <Style BasedOn="{StaticResource OP_Flat}" TargetType="Button">
+                            <Setter Property="Padding" Value="6,4" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedPlannerTab}" Value="3">
+                                    <Setter Property="Foreground" Value="{StaticResource OP_Accent}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                    <Grid Width="20" Height="20">
+                        <Ellipse Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" />
+                        <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="13" FontWeight="Bold" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Text="!" />
+                    </Grid>
+                </Button>
+                </StackPanel>
             </Grid>
         </Grid>
         </ScrollViewer>

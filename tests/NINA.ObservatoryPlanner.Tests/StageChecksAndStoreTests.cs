@@ -39,8 +39,15 @@ namespace NINA.ObservatoryPlanner.Tests {
 
         [Test]
         public void Equipment_step_before_connect_warns() {
-            var w = StageChecks.Check(StageKind.Begin, new[] { E("CoolCamera"), E("ConnectAllEquipment") }, new PlannerOptions());
+            var w = StageChecks.Check(StageKind.Begin, new[] { E("CoolCamera"), E("ConnectAllEquipment"), E("UnparkScope") }, new PlannerOptions());
             w.Should().ContainSingle().Which.Should().Contain("runs before equipment is connected");
+        }
+
+        [Test]
+        public void Begin_without_unpark_warns_that_a_parked_mount_cannot_slew() {
+            StageChecks.Check(StageKind.Begin, new[] { E("ConnectAllEquipment") }, new PlannerOptions())
+                .Should().ContainSingle().Which.Should().Contain("unparks the mount");
+            StageChecks.Check(StageKind.Begin, new[] { E("ConnectAllEquipment"), E("UnparkScope") }, new PlannerOptions()).Should().BeEmpty();
         }
 
         [Test]

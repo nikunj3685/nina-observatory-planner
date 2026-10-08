@@ -69,8 +69,12 @@ namespace NINA.ObservatoryPlanner.Tests {
             return FailFrames ? 0 : frames;
         }
 
+        /// <summary>The simulated time of each "gap …" call.</summary>
+        public readonly List<DateTime> GapTimes = new();
+
         public Task RunGapSteps(IReadOnlyList<GapStep> steps, CancellationToken token) {
             Calls.Add("gap " + string.Join(",", steps));
+            GapTimes.Add(clock.Now);
             return Task.CompletedTask;
         }
     }
@@ -78,7 +82,9 @@ namespace NINA.ObservatoryPlanner.Tests {
     internal class ListLog : IPlannerLog {
         public readonly List<(PlannerPhase phase, string message)> Phases = new();
         public void Phase(PlannerPhase phase, string message, PlannerTarget target = null) { lock (Phases) { Phases.Add((phase, message)); } }
+        public readonly List<string> Statuses = new();
         public void Info(string message) { }
+        public void Status(string message) { lock (Statuses) { Statuses.Add(message); } }
     }
 
     [TestFixture]
@@ -162,7 +168,7 @@ namespace NINA.ObservatoryPlanner.Tests {
         }
 
         [Test]
-        public async Task A_long_wait_parks_and_unparks_5_minutes_before_the_next_target() {
+        public async Task A_long_wait_parks_and_unparks_at_the_next_targets_start_time() {
             var t1 = TestData.Circumpolar("Target 1", frames: 1000, exposure: 300);
             t1.End = TestData.At(1, 0);
             var t2 = TestData.Circumpolar("Target 2", frames: 2, exposure: 300);
@@ -175,6 +181,7 @@ namespace NINA.ObservatoryPlanner.Tests {
             var gapIndex = hw.Calls.FindIndex(c => c == "gap StopGuiding,StopTracking,Park,CloseDome");
             gapIndex.Should().BeGreaterThan(0);
             hw.Calls[gapIndex + 1].Should().Be("gap OpenDome,Unpark");
+            hw.GapTimes[1].Should().Be(TestData.Night(2), "the wait ends at the target's start time, not some minutes before");
             hw.Calls[gapIndex + 2].Should().Be("target Target 2 at 02:00");
         }
 
