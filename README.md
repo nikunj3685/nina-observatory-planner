@@ -18,7 +18,7 @@ The four stages of the night are ordinary Advanced Sequencer instruction sets yo
 
 ## Features
 
-- Target list with start / end by clock time or altitude (linked: edit one, the other follows), rotation (also from the Framing Assistant), exposure rows (Light, Dark, Bias, Flat, Dark flat) with priority and repeat, progress saved after every frame
+- Target list with start / end by clock time or altitude (linked: edit one, the other follows), rotation (also from the Framing Assistant), exposure rows (Light, Dark, Bias, Flat) with priority and repeat, progress saved after every frame
 - Target Settings with Slew now / Center now (collision warning for low targets, unparks a parked mount), from Framing Assistant or planetarium
 - Planning tools: 24-hour altitude chart for tonight; click to set the start, right-click to set the end
 - One Pause for the whole run (Pause now / after this step), then Start sequence: continues an interrupted 1 Begin, restarts guiding or runs 2 Start of target again as needed

@@ -20,7 +20,10 @@ namespace NINA.ObservatoryPlanner.Core {
         /// <summary>Stop guiding, park, close the dome; power, connections and camera cooling stay on until safe again.</summary>
         CloseUpAndWait
     }
-    /// <summary>The image type of an exposure row. NINA 3 has no separate dark flat type: dark flats are saved as DARK.</summary>
+    /// <summary>
+    /// The image type of an exposure row. DarkFlat is no longer offered (NINA 3 saves dark flats as DARK); it is only kept so
+    /// lists saved with it still load, and such rows become Dark.
+    /// </summary>
     public enum ExposureType { Light, Dark, Bias, Flat, DarkFlat }
 
     public abstract class Observable : INotifyPropertyChanged {
@@ -73,7 +76,7 @@ namespace NINA.ObservatoryPlanner.Core {
         [JsonProperty] public double ExposureTime { get => exposureTime; set => Set(ref exposureTime, Math.Max(0, value)); }
         // Gain is not set per row: frames use the camera's gain (NINA's camera settings or the driver default).
         // Lists saved before 1.1 have a "Gain" value, which is ignored when they are read.
-        [JsonProperty] public ExposureType Type { get => type; set => Set(ref type, value); }
+        [JsonProperty] public ExposureType Type { get => type; set => Set(ref type, value == ExposureType.DarkFlat ? ExposureType.Dark : value); }
         [JsonProperty] public string Binning { get => binning; set => Set(ref binning, string.IsNullOrWhiteSpace(value) ? "1x1" : value); }
         [JsonProperty] public int Count { get => count; set { if (Set(ref count, Math.Max(0, value))) { Raise(nameof(Remaining)); } } }
         [JsonProperty] public int Done { get => done; set { if (Set(ref done, Math.Max(0, value))) { Raise(nameof(Remaining)); } } }

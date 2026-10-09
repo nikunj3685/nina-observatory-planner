@@ -175,7 +175,7 @@ namespace NINA.ObservatoryPlanner.Nina {
 
         /// <summary>NINA's image type for a row. NINA 3 saves dark flats as DARK (it migrates the old DARKFLAT type to DARK).</summary>
         public static string ImageTypeOf(ExposureType type) => type switch {
-            ExposureType.Dark or ExposureType.DarkFlat => CaptureSequence.ImageTypes.DARK,
+            ExposureType.Dark => CaptureSequence.ImageTypes.DARK,
             ExposureType.Bias => CaptureSequence.ImageTypes.BIAS,
             ExposureType.Flat => CaptureSequence.ImageTypes.FLAT,
             _ => CaptureSequence.ImageTypes.LIGHT

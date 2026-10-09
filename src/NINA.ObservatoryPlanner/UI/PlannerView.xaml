@@ -765,7 +765,7 @@
                                                 <DataGridTemplateColumn Width="86" Header="Type">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
-                                                            <ComboBox DisplayMemberPath="Label" ItemsSource="{Binding DataContext.ExposureTypeChoices, RelativeSource={RelativeSource AncestorType=DataGrid}}" SelectedValue="{Binding Type}" SelectedValuePath="Value" ToolTip="Image type. Dark flats are saved as DARK (NINA 3 has no separate dark flat type). The camera's gain is used." />
+                                                            <ComboBox DisplayMemberPath="Label" ItemsSource="{Binding DataContext.ExposureTypeChoices, RelativeSource={RelativeSource AncestorType=DataGrid}}" SelectedValue="{Binding Type}" SelectedValuePath="Value" ToolTip="Image type. The camera's gain is used." />
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>

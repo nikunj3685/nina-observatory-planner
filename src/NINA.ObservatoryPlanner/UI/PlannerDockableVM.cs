@@ -85,7 +85,7 @@ namespace NINA.ObservatoryPlanner.UI {
             BinningChoices = new[] { "1x1", "2x2", "3x3", "4x4" };
             ExposureTypeChoices = new[] {
                 new Choice(ExposureType.Light, "Light"), new Choice(ExposureType.Dark, "Dark"), new Choice(ExposureType.Bias, "Bias"),
-                new Choice(ExposureType.Flat, "Flat"), new Choice(ExposureType.DarkFlat, "Dark flat")
+                new Choice(ExposureType.Flat, "Flat")
             };
             KeepItems = NinaPlannerHardware.Devices.Select(d => new KeepItem(d, Options)).ToList();
             Brush[] stageBrushes = { PlannerBrushes.Safe, PlannerBrushes.Info, PlannerBrushes.Accent, PlannerBrushes.Unsafe };

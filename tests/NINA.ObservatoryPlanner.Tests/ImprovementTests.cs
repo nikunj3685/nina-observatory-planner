@@ -119,18 +119,21 @@ namespace NINA.ObservatoryPlanner.Tests {
             e.Type.Should().Be(ExposureType.Light, "rows from before 1.1 are light frames");
             e.Done.Should().Be(2);
 
-            e.Type = ExposureType.DarkFlat;
+            e.Type = ExposureType.Bias;
             var json = PlannerStore.Serialize(list);
-            json.Should().Contain("\"Type\": \"DarkFlat\"").And.NotContain("Gain").And.NotContain("IsActive");
-            PlannerStore.Deserialize<TargetList>(json).Targets[0].Exposures[0].Type.Should().Be(ExposureType.DarkFlat);
-            e.Clone(keepProgress: false).Type.Should().Be(ExposureType.DarkFlat);
+            json.Should().Contain("\"Type\": \"Bias\"").And.NotContain("Gain").And.NotContain("IsActive");
+            PlannerStore.Deserialize<TargetList>(json).Targets[0].Exposures[0].Type.Should().Be(ExposureType.Bias);
+            e.Clone(keepProgress: false).Type.Should().Be(ExposureType.Bias);
+
+            // "Dark flat" is no longer offered: rows saved with it load as Dark
+            var darkFlat = json.Replace("\"Type\": \"Bias\"", "\"Type\": \"DarkFlat\"");
+            PlannerStore.Deserialize<TargetList>(darkFlat).Targets[0].Exposures[0].Type.Should().Be(ExposureType.Dark);
         }
 
         [TestCase(ExposureType.Light, "LIGHT")]
         [TestCase(ExposureType.Dark, "DARK")]
         [TestCase(ExposureType.Bias, "BIAS")]
         [TestCase(ExposureType.Flat, "FLAT")]
-        [TestCase(ExposureType.DarkFlat, "DARK")]
         public void Exposure_type_maps_to_NINAs_image_type(ExposureType type, string imageType) {
             InstructionFactory.ImageTypeOf(type).Should().Be(imageType);
         }
