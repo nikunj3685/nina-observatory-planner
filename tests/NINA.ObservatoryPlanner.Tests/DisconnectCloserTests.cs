@@ -191,6 +191,21 @@ namespace NINA.ObservatoryPlanner.Tests {
         }
 
         [Test]
+        public async Task PHD2_is_found_as_localhost_quickly_over_IPv4() {
+            // NINA's default PHD2 address is "localhost"; PHD2 listens on IPv4 only (a refused IPv6 attempt takes ~2 s on Windows)
+            var (requests, port, server) = await FakePhd2Server(closeOnShutdown: false);
+            var client = new Phd2Client(() => ("localhost", port)) { RequestTimeout = TimeSpan.FromSeconds(5) };
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            await client.ShutDown(closeApp: false, CancellationToken.None);
+            watch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(1));
+            await server;
+            requests.Should().HaveCount(2);
+            (await Phd2Client.ResolveIPv4("localhost", CancellationToken.None)).Should().Be(IPAddress.Loopback);
+            (await Phd2Client.ResolveIPv4("", CancellationToken.None)).Should().Be(IPAddress.Loopback);
+            (await Phd2Client.ResolveIPv4("192.168.2.10", CancellationToken.None)).Should().Be(IPAddress.Parse("192.168.2.10"));
+        }
+
+        [Test]
         public async Task Keeping_PHD2_open_only_disconnects_its_equipment() {
             var (requests, port, server) = await FakePhd2Server(closeOnShutdown: false);
             var client = new Phd2Client(() => ("127.0.0.1", port)) { RequestTimeout = TimeSpan.FromSeconds(5) };

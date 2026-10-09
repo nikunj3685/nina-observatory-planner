@@ -5,6 +5,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -39,22 +40,36 @@ namespace NINA.ObservatoryPlanner.Nina {
         /// <summary>How long to wait for PHD2 to close after "shutdown".</summary>
         public TimeSpan ExitTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
+        /// <summary>
+        /// PHD2 listens on IPv4 only. "localhost" also resolves to IPv6 ::1, and on Windows a refused connection to ::1
+        /// takes about 2 s, so connect to the IPv4 address directly, as NINA does.
+        /// </summary>
+        internal static async Task<IPAddress> ResolveIPv4(string host, CancellationToken token) {
+            if (string.IsNullOrWhiteSpace(host) || string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)) { return IPAddress.Loopback; }
+            if (IPAddress.TryParse(host, out var ip)) { return ip; }
+            var all = await Dns.GetHostAddressesAsync(host, token);
+            return all.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork) ?? all.FirstOrDefault();
+        }
+
         private async Task<TcpClient> Connect(TimeSpan timeout, CancellationToken token) {
             var (host, port) = endpoint();
-            var client = new TcpClient();
+            TcpClient client = null;
             try {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
                 cts.CancelAfter(timeout);
-                await client.ConnectAsync(string.IsNullOrWhiteSpace(host) ? "localhost" : host, port, cts.Token);
+                var ip = await ResolveIPv4(host, cts.Token);
+                if (ip == null) { return null; }
+                client = new TcpClient(ip.AddressFamily);
+                await client.ConnectAsync(ip, port, cts.Token);
                 return client;
             } catch (Exception) when (!token.IsCancellationRequested) {
-                client.Dispose();
+                client?.Dispose();
                 return null;
             }
         }
 
         public async Task<bool> IsRunning(CancellationToken token) {
-            using var client = await Connect(TimeSpan.FromSeconds(2), token);
+            using var client = await Connect(TimeSpan.FromSeconds(5), token);
             return client != null;
         }
 

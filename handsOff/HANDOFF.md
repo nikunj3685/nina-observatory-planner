@@ -50,7 +50,7 @@ NINA.
 
 ## Test results (2026-10-08)
 
-- **Unit tests:** 199, all passing.
+- **Unit tests:** 200, all passing.
 - **Simulator e2e:** 78/78 (nosafety 4, safety 22, ui 11, negative 11, timing 7,
   single 5, pause 11, restart 7).
 - **Fixed during this round:**
@@ -74,7 +74,7 @@ Only the .NET 10 runtime is installed on this PC, so set roll-forward:
 
 ```bash
 export DOTNET_ROLL_FORWARD=LatestMajor
-dotnet test NINA.ObservatoryPlanner.slnx                     # 199 tests, all passing
+dotnet test NINA.ObservatoryPlanner.slnx                     # 200 tests, all passing
 dotnet build src/NINA.ObservatoryPlanner/NINA.ObservatoryPlanner.csproj -c Release
 ```
 
@@ -151,7 +151,7 @@ the simulated images have no stars.
 
 ## What changed this session (1.1.0.0, from `Feature-Improvement List.txt`)
 
-Done, unit-tested (199 passing) and installed, not committed or tested on the rig:
+Done, unit-tested (200 passing) and installed, not committed or tested on the rig:
 
 - **#1** Countdown during the wait after safe, and while waiting for the next target.
 - **#2** 4 End always runs when a step's error behaviour stops NINA's sequence. Failed
@@ -246,6 +246,11 @@ Done, unit-tested (199 passing) and installed, not committed or tested on the ri
   CivilDawn −6 default, Sunrise −0.833) drive `TargetSelector.IsDark`. The close-up's
   `Morning()` uses its own `CloseUpEnd` (default CivilDawn). The e2e scenarios set
   `NightLimitEnabled = false`. An old DarkSunAltitude value in options.json is ignored.
+- **PHD2 not closing on the live rig** (logs in `debuglogs/`, 8–9 Oct): both handlers ran, but the
+  PHD2 connect to "localhost" timed out (IPv6 ::1 first, ~2 s refusal on Windows), so PHD2 was
+  taken as not running. `Phd2Client.ResolveIPv4` now connects to 127.0.0.1 like NINA, with a 5 s
+  timeout. Also: PHD2 is closed at the end of a 4 End that disconnects the guider when NINA's
+  guider was never connected (`DisconnectCloser.OnEndFinished`).
 - **Info tab** (the ! next to the ⚙ gear, `SelectedPlannerTab` 3): notes on
   editing during a run and on adding sections in the Advanced Sequencer.
 
