@@ -42,7 +42,7 @@ namespace NINA.ObservatoryPlanner.Core {
     [JsonObject(MemberSerialization.OptIn)]
     public class TimeConstraint : Observable {
         private bool enabled;
-        private ConstraintBy by = ConstraintBy.Altitude;
+        private ConstraintBy by = ConstraintBy.Time; // as in SGP, a new constraint is time-locked
         private double altitude = 30;
         private TimeSpan time = new TimeSpan(22, 0, 0);
 

@@ -87,42 +87,53 @@
             <ItemsControl x:Name="constraints">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <!--  ☑ Start at: 🔒 [ 70.4 ▲▼ ] ° 🔗 [ 7:49:00 PM ▲▼ ] today  (as in SGP)  -->
-                        <Grid Margin="0,3" IsEnabled="{Binding Enabled}">
+                        <!--  ☑ Start at: 🔒 [ 70.4 ▲▼ ] ° 🔗 [ 7:49:00 PM ▲▼ ] today  (as in SGP: one lock, the locked field shaded orange)  -->
+                        <Grid Margin="0,3">
+                            <Grid.Resources>
+                                <Style x:Key="Locked" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+                                    <Setter Property="Opacity" Value="0.75" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
+                                            <Setter Property="Opacity" Value="1" />
+                                            <Setter Property="BorderBrush" Value="#E3A646" />
+                                            <Setter Property="BorderThickness" Value="2" />
+                                            <Setter Property="Background" Value="#33E3A646" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Grid.Resources>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="92" />
-                                <ColumnDefinition Width="24" />
+                                <ColumnDefinition Width="26" />
                                 <ColumnDefinition Width="58" />
                                 <ColumnDefinition Width="16" />
                                 <ColumnDefinition Width="16" />
-                                <ColumnDefinition Width="22" />
                                 <ColumnDefinition Width="24" />
-                                <ColumnDefinition Width="96" />
+                                <ColumnDefinition Width="100" />
                                 <ColumnDefinition Width="16" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <CheckBox Content="{Binding Label}" IsChecked="{Binding Enabled}" IsEnabled="True" Style="{DynamicResource OP_Check}" />
-                            <Button Grid.Column="1" Padding="0" Command="{Binding LockAltitude}" Content="{Binding AltitudeLock}" FontFamily="Segoe UI Symbol" Style="{DynamicResource OP_Flat}" ToolTip="{Binding AltitudeLockTip}" />
-                            <TextBox Grid.Column="2" Text="{Binding AltitudeText, UpdateSourceTrigger=LostFocus}" ToolTip="Altitude in degrees" />
-                            <StackPanel Grid.Column="3" VerticalAlignment="Center">
+                            <CheckBox Content="{Binding Label}" IsChecked="{Binding Enabled}" Style="{DynamicResource OP_Check}" />
+                            <Button Grid.Column="1" Padding="0" Command="{Binding ToggleLock}" Content="🔒" FontFamily="Segoe UI Symbol" Foreground="#E3A646" IsEnabled="{Binding Enabled}" Style="{DynamicResource OP_Flat}" ToolTip="{Binding LockTip}" />
+                            <TextBox Grid.Column="2" IsEnabled="{Binding Enabled}" Style="{StaticResource Locked}" Tag="{Binding ByAltitude}" Text="{Binding AltitudeText, UpdateSourceTrigger=PropertyChanged}" ToolTip="Altitude in degrees" />
+                            <StackPanel Grid.Column="3" VerticalAlignment="Center" IsEnabled="{Binding Enabled}">
                                 <RepeatButton Height="12" Padding="0" Command="{Binding AltitudeUp}" Content="▲" FontSize="7" ToolTip="+1°" />
                                 <RepeatButton Height="12" Padding="0" Command="{Binding AltitudeDown}" Content="▼" FontSize="7" ToolTip="−1°" />
                             </StackPanel>
                             <TextBlock Grid.Column="4" Margin="3,0,0,0" VerticalAlignment="Center" Opacity="0.7" Text="°" />
-                            <TextBlock Grid.Column="5" VerticalAlignment="Center" FontFamily="Segoe UI Symbol" Opacity="0.7" Text="🔗" TextAlignment="Center" ToolTip="Linked: editing one recalculates the other for tonight" />
-                            <Button Grid.Column="6" Padding="0" Command="{Binding LockTime}" Content="{Binding TimeLock}" FontFamily="Segoe UI Symbol" Style="{DynamicResource OP_Flat}" ToolTip="{Binding TimeLockTip}" />
-                            <TextBox Grid.Column="7" Text="{Binding TimeText, UpdateSourceTrigger=LostFocus}" ToolTip="Local time, e.g. 7:49 PM or 19:49" />
-                            <StackPanel Grid.Column="8" VerticalAlignment="Center">
+                            <TextBlock Grid.Column="5" VerticalAlignment="Center" FontFamily="Segoe UI Symbol" Opacity="0.75" Text="{Binding LinkIcon}" TextAlignment="Center" ToolTip="{Binding LinkTip}" />
+                            <TextBox Grid.Column="6" IsEnabled="{Binding Enabled}" Style="{StaticResource Locked}" Tag="{Binding TimeLocked}" Text="{Binding TimeText, UpdateSourceTrigger=PropertyChanged}" ToolTip="Local time, e.g. 7:49 PM or 19:49" />
+                            <StackPanel Grid.Column="7" VerticalAlignment="Center" IsEnabled="{Binding Enabled}">
                                 <RepeatButton Height="12" Padding="0" Command="{Binding TimeUp}" Content="▲" FontSize="7" ToolTip="+1 minute" />
                                 <RepeatButton Height="12" Padding="0" Command="{Binding TimeDown}" Content="▼" FontSize="7" ToolTip="−1 minute" />
                             </StackPanel>
-                            <TextBlock Grid.Column="9" Margin="8,0,0,0" VerticalAlignment="Center" Opacity="0.7" Text="{Binding Note}" />
+                            <TextBlock Grid.Column="8" Margin="8,0,0,0" VerticalAlignment="Center" Opacity="0.7" Text="{Binding Note}" TextWrapping="Wrap" />
                         </Grid>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
             <Button Margin="0,6,0,0" HorizontalAlignment="Left" Click="Planning_Click" Content="📈 Planning tools" Style="{DynamicResource OP_Link}" />
-            <TextBlock Margin="0,6,0,0" FontSize="12" Opacity="0.65" Text="No start: begins as soon as it is safe and this target is next. No end: runs until unsafe or all exposures are done. The 🔒 marks which value is used; 🔗 the other one follows it for tonight." TextWrapping="Wrap" />
+            <TextBlock Margin="0,6,0,0" FontSize="12" Opacity="0.65" Text="No start: begins as soon as it is safe and this target is next. No end: runs until unsafe or all exposures are done. The 🔒 switches which value stays constant on other nights (shaded orange); 🔗 editing one updates the other for tonight." TextWrapping="Wrap" />
 
             <TextBlock Style="{StaticResource Section}" Text="Other" />
             <StackPanel Orientation="Horizontal">

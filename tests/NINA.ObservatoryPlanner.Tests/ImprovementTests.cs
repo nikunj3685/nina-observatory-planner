@@ -231,36 +231,41 @@ namespace NINA.ObservatoryPlanner.Tests {
         }
 
         [Test]
-        public void Editing_the_time_updates_the_altitude_and_the_reverse() {
+        public void Editing_one_value_updates_the_other_at_once_and_keeps_the_lock() {
             var vm = Make();
             var row = vm.End;
-            row.AltitudeEditable.Should().BeTrue();
-            row.TimeEditable.Should().BeTrue("both values can be edited");
-            var timeFor30 = row.TimeText;
-            timeFor30.Should().NotBeNullOrEmpty();
+            row.ByAltitude.Should().BeTrue();
 
             row.TimeText = "01:00";
-            row.ByAltitude.Should().BeFalse("the value edited last is the constraint");
+            row.ByAltitude.Should().BeTrue("editing does not move the lock, as in SGP");
+            row.Constraint.Time.Should().Be(new TimeSpan(1, 0, 0));
             var at1 = NightTime.At(new TimeSpan(1, 0, 0), vm.Night.Now);
             double.Parse(row.AltitudeText).Should().BeApproximately(vm.Night.Altitude(20.98, 44.3, at1), 0.06);
-            row.Constraint.Time.Should().Be(new TimeSpan(1, 0, 0));
 
             row.AltitudeText = "40";
-            row.ByAltitude.Should().BeTrue();
-            row.TimeText.Should().Be(ConstraintRow.FormatTime(vm.Night.TimeAtAltitude(20.98, 44.3, 40, rising: false).Value.TimeOfDay));
             row.Constraint.Altitude.Should().Be(40);
+            var t40 = vm.Night.TimeAtAltitude(20.98, 44.3, 40, rising: false).Value;
+            row.TimeText.Should().Be(ConstraintRow.FormatTime(new TimeSpan(t40.Hour, t40.Minute, 0)), "the time is shown to the minute");
         }
 
         [Test]
-        public void Locks_spinners_and_the_day_work_like_SGP() {
+        public void One_lock_switches_which_value_stays_constant() {
             var vm = Make();
             var row = vm.End;
-            row.AltitudeLock.Should().Be("🔒");
-            row.TimeLock.Should().Be("🔓");
-            row.LockTime.Execute(null);
+            row.TimeLocked.Should().BeFalse();
+            row.LockTip.Should().StartWith("Altitude locked");
+            row.ToggleLock.Execute(null);
             row.ByAltitude.Should().BeFalse();
-            row.TimeLock.Should().Be("🔒");
+            row.TimeLocked.Should().BeTrue();
+            row.LockTip.Should().StartWith("Time locked");
+            new TimeConstraint().By.Should().Be(ConstraintBy.Time, "a new constraint is time-locked, as in SGP");
+        }
 
+        [Test]
+        public void Spinners_and_the_day() {
+            var vm = Make();
+            var row = vm.End;
+            row.ToggleLock.Execute(null);
             row.TimeText = "11:30 PM";
             row.Constraint.Time.Should().Be(new TimeSpan(23, 30, 0), "the Windows (12 h) format is read");
             row.Note.Should().Be("today");
@@ -269,24 +274,32 @@ namespace NINA.ObservatoryPlanner.Tests {
             row.TimeText = "00:10";
             row.Note.Should().Be("tomorrow", "after midnight belongs to the same night");
             row.TimeDown.Execute(null);
-            row.TimeDown.Execute(null);
-            row.TimeDown.Execute(null);
-            row.Constraint.Time.Should().Be(new TimeSpan(0, 7, 0));
-
+            row.Constraint.Time.Should().Be(new TimeSpan(0, 9, 0));
             row.AltitudeUp.Execute(null);
-            row.ByAltitude.Should().BeTrue("spinning the altitude makes it the constraint");
-            row.AltitudeDown.Execute(null);
-            row.AltitudeDown.Execute(null);
+            row.ByAltitude.Should().BeFalse("the spinner does not move the lock either");
             row.Constraint.Altitude.Should().Be(Math.Round(row.Constraint.Altitude));
         }
 
         [Test]
-        public void Changing_the_coordinates_recalculates_the_linked_value() {
+        public void An_altitude_never_reached_breaks_the_link_and_only_the_time_is_used() {
+            var vm = Make();
+            var row = vm.End;
+            row.AltitudeText = "89";
+            row.Broken.Should().BeTrue();
+            row.LinkIcon.Should().Be("⛓");
+            row.Note.Should().Contain("only the time is used");
+            row.Result().By.Should().Be(ConstraintBy.Time);
+            row.AltitudeText = "30";
+            row.Broken.Should().BeFalse();
+            row.Result().By.Should().Be(ConstraintBy.Altitude);
+        }
+
+        [Test]
+        public void Changing_the_coordinates_recalculates_the_unlocked_value() {
             var vm = Make();
             var before = vm.End.TimeText;
             vm.RaText = "22h00m00s";
-            vm.End.ByAltitude.Should().BeTrue();
-            vm.End.AltitudeText.Should().Be("30");
+            vm.End.AltitudeText.Should().Be("30", "the altitude is locked");
             vm.End.TimeText.Should().NotBe(before, "the target sets through 30° about an hour later");
         }
     }
