@@ -36,7 +36,10 @@ namespace NINA.ObservatoryPlanner.Core {
 
         public double Altitude(PlannerTarget t, DateTime local) => Sky.Altitude(t.RaHours, t.DecDegrees, site, DateTime.SpecifyKind(ToUtc(local), DateTimeKind.Utc));
 
-        public bool IsDark(DateTime local) => Sky.SunAltitude(site, DateTime.SpecifyKind(ToUtc(local), DateTimeKind.Utc)) <= options.DarkSunAltitude;
+        public double SunAltitude(DateTime local) => Sky.SunAltitude(site, DateTime.SpecifyKind(ToUtc(local), DateTimeKind.Utc));
+
+        /// <summary>Dark enough to image: the Sun is below the Night setting, or that setting is off.</summary>
+        public bool IsDark(DateTime local) => !options.NightLimitEnabled || SunAltitude(local) <= SunLimits.Altitude(options.NightLimit);
 
         private bool IsSetting(PlannerTarget t, DateTime local) => Altitude(t, local.AddMinutes(5)) < Altitude(t, local);
 

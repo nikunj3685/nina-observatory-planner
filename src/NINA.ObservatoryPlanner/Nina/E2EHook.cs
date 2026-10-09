@@ -77,7 +77,7 @@ namespace NINA.ObservatoryPlanner.Nina {
                 planner.Options.AutofocusAfterBegin = o.AutofocusAfterBegin;
                 planner.Options.CloseGuiderAppOnDisconnect = o.CloseGuiderAppOnDisconnect;
                 planner.Options.CloseMountAppOnDisconnect = o.CloseMountAppOnDisconnect;
-                planner.Options.DarkSunAltitude = o.DarkSunAltitude;
+                planner.Options.NightLimitEnabled = o.NightLimitEnabled;
                 planner.Options.KeepConnected.Clear();
                 foreach (var d in o.KeepConnected) { planner.Options.KeepConnected.Add(d); }
             }

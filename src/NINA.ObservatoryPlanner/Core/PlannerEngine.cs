@@ -413,8 +413,8 @@ namespace NINA.ObservatoryPlanner.Core {
 
         private enum CloseUpEnd { Reopen, Ended, NightOver, Stopped }
 
-        /// <summary>The morning: the sun has risen above "image only while the sun is below".</summary>
-        private bool Morning() => clock.Now.Hour < 12 && !selector.IsDark(clock.Now);
+        /// <summary>The morning, for the weather close-up: the Sun has risen above its own limit (Civil Dawn by default).</summary>
+        private bool Morning() => clock.Now.Hour < 12 && selector.SunAltitude(clock.Now) > SunLimits.Altitude(options.CloseUpEnd);
 
         /// <summary>
         /// Closed up for the weather, power and camera cooling on. Opens up again when it is safe (after the wait after

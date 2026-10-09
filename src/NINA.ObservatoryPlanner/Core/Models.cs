@@ -13,6 +13,19 @@ namespace NINA.ObservatoryPlanner.Core {
     public enum ExposureOrder { RotateThroughFilters, FinishEachRowFirst }
     public enum RunMode { WithSafety, WithoutSafety }
     public enum GapMountAction { KeepTracking, StopTrackingAndPark, StopTrackingAndFindHome }
+    /// <summary>Twilight limits, as NINA's Dawn / Nautical Dawn / Civil Dawn / Sunrise times (and the matching dusk).</summary>
+    public enum SunLimit { AstronomicalDawn, NauticalDawn, CivilDawn, Sunrise }
+
+    public static class SunLimits {
+        /// <summary>Sun altitude of the limit in degrees: −18, −12, −6, or −0.833 (the sun's upper edge at the horizon, with refraction).</summary>
+        public static double Altitude(SunLimit limit) => limit switch {
+            SunLimit.AstronomicalDawn => -18,
+            SunLimit.NauticalDawn => -12,
+            SunLimit.CivilDawn => -6,
+            _ => -0.833
+        };
+    }
+
     /// <summary>What happens when it turns unsafe during the night (with a safety monitor).</summary>
     public enum UnsafeAction {
         /// <summary>4 End: the full shutdown (warm the camera, power off).</summary>
@@ -186,7 +199,9 @@ namespace NINA.ObservatoryPlanner.Core {
         private ExposureOrder defaultOrder = ExposureOrder.FinishEachRowFirst;
         private bool confirmDeleteTarget = true;
         private bool confirmDeleteExposure = true;
-        private double darkSunAltitude = -12;
+        private bool nightLimitEnabled = true;
+        private SunLimit nightLimit = SunLimit.CivilDawn;
+        private SunLimit closeUpEnd = SunLimit.CivilDawn;
         private string workflowName;
         private int safeDelaySeconds;
         private bool autoStartOnLaunch;
@@ -214,8 +229,11 @@ namespace NINA.ObservatoryPlanner.Core {
         [JsonProperty] public ExposureOrder DefaultOrder { get => defaultOrder; set => Set(ref defaultOrder, value); }
         [JsonProperty] public bool ConfirmDeleteTarget { get => confirmDeleteTarget; set => Set(ref confirmDeleteTarget, value); }
         [JsonProperty] public bool ConfirmDeleteExposure { get => confirmDeleteExposure; set => Set(ref confirmDeleteExposure, value); }
-        /// <summary>Targets are only imaged while the Sun is below this altitude.</summary>
-        [JsonProperty] public double DarkSunAltitude { get => darkSunAltitude; set => Set(ref darkSunAltitude, value); }
+        /// <summary>Targets are only imaged while the Sun is below <see cref="NightLimit"/> (off: the Sun is not considered).</summary>
+        [JsonProperty] public bool NightLimitEnabled { get => nightLimitEnabled; set => Set(ref nightLimitEnabled, value); }
+        [JsonProperty] public SunLimit NightLimit { get => nightLimit; set => Set(ref nightLimit, value); }
+        /// <summary>Closed up for the weather: the night has ended (4 End runs) once the Sun rises above this in the morning.</summary>
+        [JsonProperty] public SunLimit CloseUpEnd { get => closeUpEnd; set => Set(ref closeUpEnd, value); }
 
         /// <summary>With safety: once the monitor reports safe, wait this long (it must stay safe) before 1 Begin.</summary>
         [JsonProperty] public int SafeDelaySeconds { get => safeDelaySeconds; set => Set(ref safeDelaySeconds, Math.Max(0, value)); }
@@ -249,7 +267,7 @@ namespace NINA.ObservatoryPlanner.Core {
         public void CopyFrom(PlannerOptions o) {
             RunMode = o.RunMode; GapMinutes = o.GapMinutes; GapMount = o.GapMount; GapCloseDome = o.GapCloseDome;
             DefaultDelayFirst = o.DefaultDelayFirst; DefaultDelayBetween = o.DefaultDelayBetween; DefaultOrder = o.DefaultOrder;
-            ConfirmDeleteTarget = o.ConfirmDeleteTarget; ConfirmDeleteExposure = o.ConfirmDeleteExposure; DarkSunAltitude = o.DarkSunAltitude;
+            ConfirmDeleteTarget = o.ConfirmDeleteTarget; ConfirmDeleteExposure = o.ConfirmDeleteExposure; NightLimitEnabled = o.NightLimitEnabled; NightLimit = o.NightLimit; CloseUpEnd = o.CloseUpEnd;
             SafeDelaySeconds = o.SafeDelaySeconds; AutoStartOnLaunch = o.AutoStartOnLaunch; AutofocusAfterBegin = o.AutofocusAfterBegin;
             GuideLostWatch = o.GuideLostWatch; GuideLostWaitSeconds = o.GuideLostWaitSeconds; GuideLostAction = o.GuideLostAction;
             GuidingCheck = o.GuidingCheck; GuidingLimitPixels = o.GuidingLimitPixels; GuidingCheckWaitSeconds = o.GuidingCheckWaitSeconds;

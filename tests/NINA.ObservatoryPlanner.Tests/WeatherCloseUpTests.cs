@@ -147,6 +147,34 @@ namespace NINA.ObservatoryPlanner.Tests {
         }
 
         [Test]
+        public async Task The_close_up_ends_at_its_own_dawn_even_with_the_night_setting_off() {
+            var t = TestData.Circumpolar("T", frames: 200, exposure: 300);
+            var o = CloseUp(hours: 6);
+            o.NightLimitEnabled = false;
+            o.CloseUpEnd = SunLimit.NauticalDawn;
+            var (engine, hw, log, clock) = Make(o, c => new ScriptedSafety(c, true).At(TestData.Night(5, 0), false), TestData.Night(4, 30), t);
+            DateTime endAt = default;
+            hw.BeforeStage = (stage, _) => { if (stage == StageKind.End && endAt == default) { endAt = clock.Now; } return Task.CompletedTask; };
+            await RunUntil(engine, () => endAt != default);
+            log.Phases.Should().Contain(p => p.message == "4 End (the night has ended)");
+            TestData.Selector(o).SunAltitude(endAt).Should().BeInRange(-12.5, -11, "it ended at nautical dawn, not at the 6 h limit");
+        }
+
+        [Test]
+        public void The_night_setting_can_be_off_and_uses_NINAs_twilight_names() {
+            var o = new PlannerOptions();
+            o.NightLimitEnabled.Should().BeTrue();
+            o.NightLimit.Should().Be(SunLimit.CivilDawn);
+            o.CloseUpEnd.Should().Be(SunLimit.CivilDawn);
+            SunLimits.Altitude(SunLimit.AstronomicalDawn).Should().Be(-18);
+            SunLimits.Altitude(SunLimit.NauticalDawn).Should().Be(-12);
+            SunLimits.Altitude(SunLimit.CivilDawn).Should().Be(-6);
+            TestData.Selector(o).IsDark(TestData.Night(15)).Should().BeFalse();
+            o.NightLimitEnabled = false;
+            TestData.Selector(o).IsDark(TestData.Night(15)).Should().BeTrue("off: the Sun is not considered");
+        }
+
+        [Test]
         public void The_weather_options_default_to_4_End_and_a_2_hour_limit() {
             var o = new PlannerOptions();
             o.UnsafeAction.Should().Be(UnsafeAction.RunEnd);

@@ -186,7 +186,7 @@ $scenarioPath = Join-Path $run "scenario.json"
 [ordered]@{
     Workflow = $workflow; TargetList = $listPath; Fast = $true; AutoStart = ($Scenario -ne "ui")
     RemoveTriggers = @("AutofocusAfterFilterChange", "PlannerAutofocusOnFilterChange")   # simulated images have no stars to focus on
-    Options = [ordered]@{ RunMode = $mode; GapMinutes = 1; GapMount = "StopTrackingAndPark"; GapCloseDome = $true; AutofocusAfterBegin = $false; CloseGuiderAppOnDisconnect = $false; CloseMountAppOnDisconnect = $false; DarkSunAltitude = 90   # simulators: daylight counts as dark, so the test runs at any hour
+    Options = [ordered]@{ RunMode = $mode; GapMinutes = 1; GapMount = "StopTrackingAndPark"; GapCloseDome = $true; AutofocusAfterBegin = $false; CloseGuiderAppOnDisconnect = $false; CloseMountAppOnDisconnect = $false; NightLimitEnabled = $false   # simulators: the Sun is not considered, so the test runs at any hour
                           SafeDelaySeconds = $(if ($Scenario -eq "negative") { 20 } else { 0 })
                           KeepConnected = @("Safety Monitor", "Switch", "Dome") }
 } | ConvertTo-Json -Depth 5 | Set-Content $scenarioPath -Encoding utf8

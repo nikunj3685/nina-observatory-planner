@@ -22,6 +22,7 @@ Fixes and improvements from the first test nights.
 - **Slew now / Center now** offers to unpark a parked mount first, and the 1 Begin check warns when nothing in it unparks the mount (GS Server, for example, starts parked and refuses to slew).
 - **4 End check:** warns only when a step needs a device that an earlier step already disconnected (e.g. Warm Camera after Disconnect Camera, or anything after Disconnect All). Warm Camera after Disconnect Guider is no longer reported.
 - **Time constraints in Target Settings work like SGP:** one 🔒 per row switches whether the altitude or the clock time stays constant on other nights (the locked field is shaded orange); editing either updates the other at once; ▲▼ spinners (±1°, ±1 minute); the time in the Windows format; today / tomorrow; a broken link when the altitude is never reached tonight (then only the time is used). New constraints are time-locked, as in SGP.
+- **Night setting** (⚙ Options › Weather) can be turned off and is chosen like NINA's times: Dawn (astronomical, −18°), Nautical Dawn (−12°), Civil Dawn (−6°, default) or Sunrise. The weather close-up has its own morning end (default Civil Dawn), independent of the Night setting.
 - **▶ marks the exposure row** being imaged.
 - **Pause is disabled while 4 End runs**, which always runs to the end.
 - **The last workflow shows in the Advanced Sequencer at startup.** It was loaded, but NINA's Sequencer tab stayed on its overview page.

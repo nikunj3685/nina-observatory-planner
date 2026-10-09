@@ -1062,16 +1062,14 @@
                                     <StackPanel>
                                         <TextBlock Margin="0,0,0,6" Style="{StaticResource OP_Heading}" Text="WEATHER" />
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Night: image only while the Sun is below " />
-                                            <TextBox Width="52" Text="{Binding Options.DarkSunAltitude}" />
-                                            <TextBlock VerticalAlignment="Center" Text=" °" />
+                                            <CheckBox VerticalAlignment="Center" FontWeight="SemiBold" Content="Night: image only while the Sun is below" IsChecked="{Binding Options.NightLimitEnabled}" Style="{StaticResource OP_Check}" />
+                                            <ComboBox Width="230" Margin="8,0,0,0" DisplayMemberPath="Label" IsEnabled="{Binding Options.NightLimitEnabled}" ItemsSource="{Binding SunLimitChoices}" SelectedValue="{Binding Options.NightLimit}" SelectedValuePath="Value" />
                                         </StackPanel>
-                                        <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="This setting defines the night for the planner, and is what keeps it from imaging into daylight:" />
-                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Evening: no target starts before the Sun is below this altitude, even if the target's own start time or altitude has been reached." />
+                                        <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="This defines the night for choosing targets, and is what keeps the planner from imaging into daylight:" />
+                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Evening: no target starts before the Sun is below the chosen twilight, even if the target's own start time or altitude has been reached." />
                                         <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Morning: no frame starts that would end after the Sun rises above it. When no target can run any more, the night is finished and 4 End runs." />
-                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Closed up for the weather: the night has ended when the Sun rises above it in the morning; then 4 End runs." />
                                         <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• It does not start 1 Begin: with a safety monitor 1 Begin starts when it reports safe; without one the built-in workflows wait for astronomical dusk (Wait for Time in 1 Begin)." />
-                                        <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="Typical values: −12° (nautical twilight) or −18° (fully dark). Don't rely on a lost guide star or a failing plate solve to end the night at dawn; keep this set." />
+                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Off: the Sun is not considered; targets are limited by their own start and end settings, the horizon and the safety monitor." />
                                         <StackPanel Margin="0,12,0,0" Visibility="{Binding WithSafety, Converter={StaticResource OP_BoolVisible}}">
                                         <TextBlock Margin="0,0,0,4" FontWeight="SemiBold" Text="When it turns unsafe during the night:" />
                                         <RadioButton Content="Run 4 End (full shutdown: warm the camera, power off)" GroupName="OP_Unsafe" IsChecked="{Binding Options.UnsafeAction, Converter={StaticResource OP_EnumBool}, ConverterParameter=RunEnd}" Style="{StaticResource OP_Radio}" />
@@ -1080,9 +1078,11 @@
                                             <StackPanel Orientation="Horizontal">
                                                 <TextBlock VerticalAlignment="Center" Text="Run 4 End if it is still unsafe after " />
                                                 <TextBox Width="52" Text="{Binding Options.CloseUpMaxHours}" />
-                                                <TextBlock VerticalAlignment="Center" Text=" h, or when the night ends, whichever comes first" />
+                                                <TextBlock VerticalAlignment="Center" Text=" h, or at " />
+                                                <ComboBox Width="230" DisplayMemberPath="Label" ItemsSource="{Binding SunLimitChoices}" SelectedValue="{Binding Options.CloseUpEnd}" SelectedValuePath="Value" />
+                                                <TextBlock VerticalAlignment="Center" Text=", whichever comes first" />
                                             </StackPanel>
-                                            <TextBlock Margin="0,6,0,0" Style="{StaticResource OP_Hint}" Text="The night ends when the Sun rises above the Night setting above, or when nothing is left to image tonight. When it is safe again (after the wait after safe): open the dome, unpark, autofocus before the first frame (with the autofocus option on), then 2 Start of target. Close-up starts once 1 Begin has finished; unsafe during 1 Begin runs 4 End. If park or closing the dome fails, 4 End runs at once. Stop while closed up runs 4 End." />
+                                            <TextBlock Margin="0,6,0,0" Style="{StaticResource OP_Hint}" Text="The close-up also ends when nothing is left to image tonight. The morning time chosen here is separate from the Night setting above. When it is safe again (after the wait after safe): open the dome, unpark, autofocus before the first frame (with the autofocus option on), then 2 Start of target. Close-up starts once 1 Begin has finished; unsafe during 1 Begin runs 4 End. If park or closing the dome fails, 4 End runs at once. Stop while closed up runs 4 End." />
                                         </StackPanel>
                                         </StackPanel>
                                     </StackPanel>

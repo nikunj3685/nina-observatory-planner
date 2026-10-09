@@ -297,6 +297,11 @@ namespace NINA.ObservatoryPlanner.UI {
         public IReadOnlyList<string> FilterChoices => planner.FilterNames().DefaultIfEmpty("L").ToList();
         public IReadOnlyList<string> BinningChoices { get; }
         public IReadOnlyList<Choice> ExposureTypeChoices { get; }
+        /// <summary>The twilight limits, named as NINA names its times.</summary>
+        public IReadOnlyList<Choice> SunLimitChoices { get; } = new[] {
+            new Choice(SunLimit.AstronomicalDawn, "Dawn / Dusk (astronomical, −18°)"), new Choice(SunLimit.NauticalDawn, "Nautical Dawn / Dusk (−12°)"),
+            new Choice(SunLimit.CivilDawn, "Civil Dawn / Dusk (−6°)"), new Choice(SunLimit.Sunrise, "Sunrise / Sunset")
+        };
 
         public PlannerTarget SelectedTarget {
             get => selectedTarget;
