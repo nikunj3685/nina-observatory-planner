@@ -17,7 +17,7 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
     /// <summary>
     /// "Start at" / "End at" row of the Target Settings. Altitude and clock time are linked: editing one recalculates the
     /// other for tonight from the target's coordinates. The one edited last is the constraint the planner uses
-    /// (the ° alt / 🕑 time button shows and switches it): an altitude follows the target on other nights, a clock time doesn't.
+    /// (the 🔒 lock shows and switches it): an altitude follows the target on other nights, a clock time doesn't.
     /// </summary>
     public sealed class ConstraintRow : Observable {
         private readonly TargetSettingsVM owner;
@@ -30,14 +30,60 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
             this.isStart = isStart;
             Constraint = constraint.Clone();
             altitudeText = Constraint.Altitude.ToString("0.#", CultureInfo.CurrentCulture);
-            timeText = Constraint.Time.ToString(@"hh\:mm");
+            timeText = FormatTime(Constraint.Time);
             Toggle = new Command(() => { ByAltitude = !ByAltitude; });
+            LockAltitude = new Command(() => { ByAltitude = true; });
+            LockTime = new Command(() => { ByAltitude = false; });
+            AltitudeUp = new Command(() => StepAltitude(1));
+            AltitudeDown = new Command(() => StepAltitude(-1));
+            TimeUp = new Command(() => StepTime(1));
+            TimeDown = new Command(() => StepTime(-1));
             Sync();
         }
 
         public TimeConstraint Constraint { get; }
         public string Label => isStart ? "Start at" : "End at";
         public ICommand Toggle { get; }
+        public ICommand LockAltitude { get; }
+        public ICommand LockTime { get; }
+        public ICommand AltitudeUp { get; }
+        public ICommand AltitudeDown { get; }
+        public ICommand TimeUp { get; }
+        public ICommand TimeDown { get; }
+
+        /// <summary>The 🔒 next to the value that is the constraint, 🔓 next to the other (click it to lock that one).</summary>
+        public string AltitudeLock => ByAltitude ? "🔒" : "🔓";
+        public string TimeLock => ByAltitude ? "🔓" : "🔒";
+        public string AltitudeLockTip => ByAltitude ? "The altitude is the constraint; the time is tonight's" : "Click to use the altitude as the constraint";
+        public string TimeLockTip => ByAltitude ? "Click to use the clock time as the constraint" : "The clock time is the constraint; the altitude is tonight's";
+
+        /// <summary>Clock time in the Windows format, e.g. 7:49:00 PM or 19:49:00.</summary>
+        public static string FormatTime(TimeSpan t) => DateTime.Today.Add(t).ToString("T", CultureInfo.CurrentCulture);
+
+        /// <summary>Reads "7:49 PM", "19:49", "19:49:00" (the Windows format or 24 h).</summary>
+        public static bool TryParseTime(string text, out TimeSpan time) {
+            time = default;
+            if (string.IsNullOrWhiteSpace(text)) { return false; }
+            if (DateTime.TryParse(text, CultureInfo.CurrentCulture, DateTimeStyles.NoCurrentDateDefault, out var dt)
+                || DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.NoCurrentDateDefault, out dt)) {
+                time = dt.TimeOfDay;
+                return true;
+            }
+            return false;
+        }
+
+        private void StepAltitude(int degrees) {
+            if (!Enabled) { return; }
+            var a = Math.Max(-90, Math.Min(90, Math.Round(Constraint.Altitude) + degrees));
+            AltitudeText = a.ToString("0.#", CultureInfo.CurrentCulture);
+        }
+
+        private void StepTime(int minutes) {
+            if (!Enabled) { return; }
+            var t = new TimeSpan(Constraint.Time.Hours, Constraint.Time.Minutes, 0) + TimeSpan.FromMinutes(minutes);
+            t = TimeSpan.FromMinutes(((t.TotalMinutes % 1440) + 1440) % 1440);
+            TimeText = FormatTime(t);
+        }
 
         public bool Enabled { get => Constraint.Enabled; set { Constraint.Enabled = value; Recalculate(); } }
         public bool ByAltitude { get => Constraint.By == ConstraintBy.Altitude; set { Constraint.By = value ? ConstraintBy.Altitude : ConstraintBy.Time; Recalculate(); } }
@@ -66,7 +112,7 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
             set {
                 timeText = value;
                 Constraint.By = ConstraintBy.Time;
-                if (TimeSpan.TryParse(value, CultureInfo.InvariantCulture, out var t) && t >= TimeSpan.Zero && t < TimeSpan.FromDays(1)) {
+                if (TryParseTime(value, out var t) && t >= TimeSpan.Zero && t < TimeSpan.FromDays(1)) {
                     Constraint.Time = t;
                     Sync();
                 }
@@ -74,14 +120,22 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
             }
         }
 
-        public string Note => !Enabled ? "" : ByAltitude && timeText == "" ? "not reached tonight" : "tonight";
+        public string Note {
+            get {
+                if (!Enabled) { return ""; }
+                if (ByAltitude && timeText == "") { return "not reached tonight"; }
+                var when = NightTime.At(Constraint.Time, owner.Night.Now);
+                var today = owner.Night.Now.Date;
+                return when.Date == today ? "today" : when.Date == today.AddDays(1) ? "tomorrow" : when.ToString("ddd", CultureInfo.CurrentCulture);
+            }
+        }
 
         /// <summary>Sets the row to a clock time picked on the Planning tools chart.</summary>
         public void SetTime(DateTime local) {
             Constraint.Enabled = true;
             Constraint.By = ConstraintBy.Time;
             Constraint.Time = local.TimeOfDay;
-            timeText = Constraint.Time.ToString(@"hh\:mm");
+            timeText = FormatTime(Constraint.Time);
             Sync();
             RaiseAll();
         }
@@ -97,7 +151,7 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
             if (!owner.TryCoordinates(out var ra, out var dec)) { return; }
             if (ByAltitude) {
                 var at = owner.Night.TimeAtAltitude(ra, dec, Constraint.Altitude, rising: isStart);
-                timeText = at?.ToString("HH:mm") ?? "";
+                timeText = at is DateTime found ? FormatTime(found.TimeOfDay) : "";
                 if (at is DateTime when) { Constraint.Time = new TimeSpan(when.Hour, when.Minute, 0); }
             } else {
                 var when = NightTime.At(Constraint.Time, owner.Night.Now);
@@ -108,7 +162,7 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
 
         public void RaiseAll() {
             Raise(nameof(Enabled)); Raise(nameof(ByAltitude)); Raise(nameof(AltitudeEditable)); Raise(nameof(TimeEditable));
-            Raise(nameof(ToggleText)); Raise(nameof(ToggleTip)); Raise(nameof(AltitudeText)); Raise(nameof(TimeText)); Raise(nameof(Note));
+            Raise(nameof(ToggleText)); Raise(nameof(ToggleTip)); Raise(nameof(AltitudeLock)); Raise(nameof(TimeLock)); Raise(nameof(AltitudeLockTip)); Raise(nameof(TimeLockTip)); Raise(nameof(AltitudeText)); Raise(nameof(TimeText)); Raise(nameof(Note));
         }
     }
 

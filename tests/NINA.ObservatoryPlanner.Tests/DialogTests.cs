@@ -95,7 +95,7 @@ namespace NINA.ObservatoryPlanner.Tests {
             vm.Start.SetTime(at);
             vm.Start.Enabled.Should().BeTrue();
             vm.Start.ByAltitude.Should().BeFalse();
-            vm.Start.TimeText.Should().Be("01:30");
+            vm.Start.TimeText.Should().Be(ConstraintRow.FormatTime(new TimeSpan(1, 30, 0)));
             vm.Preview().Start.Altitude.Should().BeApproximately(vm.Night.Altitude(20.98, 44.3, at), 0.06);
         }
 

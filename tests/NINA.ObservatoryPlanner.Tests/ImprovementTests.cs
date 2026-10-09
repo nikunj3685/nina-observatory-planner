@@ -247,8 +247,37 @@ namespace NINA.ObservatoryPlanner.Tests {
 
             row.AltitudeText = "40";
             row.ByAltitude.Should().BeTrue();
-            row.TimeText.Should().NotBe("01:00").And.Be(vm.Night.TimeAtAltitude(20.98, 44.3, 40, rising: false)?.ToString("HH:mm"));
+            row.TimeText.Should().Be(ConstraintRow.FormatTime(vm.Night.TimeAtAltitude(20.98, 44.3, 40, rising: false).Value.TimeOfDay));
             row.Constraint.Altitude.Should().Be(40);
+        }
+
+        [Test]
+        public void Locks_spinners_and_the_day_work_like_SGP() {
+            var vm = Make();
+            var row = vm.End;
+            row.AltitudeLock.Should().Be("🔒");
+            row.TimeLock.Should().Be("🔓");
+            row.LockTime.Execute(null);
+            row.ByAltitude.Should().BeFalse();
+            row.TimeLock.Should().Be("🔒");
+
+            row.TimeText = "11:30 PM";
+            row.Constraint.Time.Should().Be(new TimeSpan(23, 30, 0), "the Windows (12 h) format is read");
+            row.Note.Should().Be("today");
+            row.TimeUp.Execute(null);
+            row.Constraint.Time.Should().Be(new TimeSpan(23, 31, 0));
+            row.TimeText = "00:10";
+            row.Note.Should().Be("tomorrow", "after midnight belongs to the same night");
+            row.TimeDown.Execute(null);
+            row.TimeDown.Execute(null);
+            row.TimeDown.Execute(null);
+            row.Constraint.Time.Should().Be(new TimeSpan(0, 7, 0));
+
+            row.AltitudeUp.Execute(null);
+            row.ByAltitude.Should().BeTrue("spinning the altitude makes it the constraint");
+            row.AltitudeDown.Execute(null);
+            row.AltitudeDown.Execute(null);
+            row.Constraint.Altitude.Should().Be(Math.Round(row.Constraint.Altitude));
         }
 
         [Test]
