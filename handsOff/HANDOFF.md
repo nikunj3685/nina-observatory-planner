@@ -50,7 +50,7 @@ NINA.
 
 ## Test results (2026-10-08)
 
-- **Unit tests:** 201, all passing.
+- **Unit tests:** 208, all passing.
 - **Simulator e2e:** 78/78 (nosafety 4, safety 22, ui 11, negative 11, timing 7,
   single 5, pause 11, restart 7).
 - **Fixed during this round:**
@@ -74,7 +74,7 @@ Only the .NET 10 runtime is installed on this PC, so set roll-forward:
 
 ```bash
 export DOTNET_ROLL_FORWARD=LatestMajor
-dotnet test NINA.ObservatoryPlanner.slnx                     # 201 tests, all passing
+dotnet test NINA.ObservatoryPlanner.slnx                     # 208 tests, all passing
 dotnet build src/NINA.ObservatoryPlanner/NINA.ObservatoryPlanner.csproj -c Release
 ```
 
@@ -151,7 +151,7 @@ the simulated images have no stars.
 
 ## What changed this session (1.1.0.0, from `Feature-Improvement List.txt`)
 
-Done, unit-tested (201 passing) and installed, not committed or tested on the rig:
+Done, unit-tested (208 passing) and installed, not committed or tested on the rig:
 
 - **#1** Countdown during the wait after safe, and while waiting for the next target.
 - **#2** 4 End always runs when a step's error behaviour stops NINA's sequence. Failed
@@ -256,6 +256,17 @@ Done, unit-tested (201 passing) and installed, not committed or tested on the ri
   after the `Connected` event (or a device already connected at startup). Seen in the live log:
   21:54 and 22:11 during 1 Begin. Also in that log: at 22:02 GS Server itself died mid-slew
   ("RPC server is unavailable"), not caused by the planner; GS Server's own log is needed.
+- **GS Server mount recovery** (user, 2026-10-09; `Core/MountRecovery.cs`, `Nina/GssAutoHome.cs`,
+  `PlannerService.OnMountDisconnectedForRecovery`, `PlannerEngine.MountLost/RunNightRecovering`). The live log
+  showed GS Server dying mid-slew (22:02 on 8 Oct). After a restart GS Server assumes it is parked and overwrites
+  the real axis positions (its log: GetDegrees 178.8/59.1, then SetPositions 90/90), so the position is unknown.
+  The recovery: reconnect → AutoHome through GS Server's own COM API `GS.SkyApi` (CLSID
+  9D65CC8C-4E34-4FCF-9703-8632A202363E, served by GS.Server.exe, works from 64-bit; ASCOM FindHome only slews to
+  the believed home) → unpark → continue. Rules agreed with the user: only in 1/2/3 (and waits between targets);
+  not in 4 End; paused/closed up/waiting → at Start sequence, only if the mount is not connected; failure → pause
+  and a red note, and Close Dome is skipped unless `CloseRoofWhenRecoveryFails`. Only when the mount is GS Server
+  (`ASCOM.GS.Sky.Telescope`). A loss counts as a crash when no Disconnect step for the mount is running. Also: a
+  `GssAutoHomeInstruction`. Not yet tested with a real AutoHome (needs the CQ-350).
 - **Info tab** (the ! next to the ⚙ gear, `SelectedPlannerTab` 3): notes on
   editing during a run and on adding sections in the Advanced Sequencer.
 

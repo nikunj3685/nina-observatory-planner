@@ -66,6 +66,12 @@ namespace NINA.ObservatoryPlanner.Core {
         }
 
         /// <summary>Safe again after a close-up: open the dome and unpark (autofocus runs before the next frame). False when that failed.</summary>
+        /// <summary>The mount was lost and its position is not known (GS Server stopped while it was not parked).</summary>
+        bool MountPositionUnknown => false;
+
+        /// <summary>Reconnect, AutoHome and unpark the mount after it was lost. True when its position is known again.</summary>
+        Task<bool> RecoverMount(CancellationToken token) => Task.FromResult(true);
+
         async Task<bool> Reopen(CancellationToken token) {
             await RunGapSteps(GapPlan.For(GapMountAction.StopTrackingAndPark, closeDome: true).Resume, token);
             return true;
@@ -79,7 +85,7 @@ namespace NINA.ObservatoryPlanner.Core {
         void Status(string message) { }
     }
 
-    public enum NightResult { Finished, Unsafe, Paused, Stopped, StoppedForNight, ClosedUp }
+    public enum NightResult { Finished, Unsafe, Paused, Stopped, StoppedForNight, ClosedUp, MountLost }
 
     /// <summary>How a run ended.</summary>
     public enum RunOutcome { Finished, Paused, Stopped }
@@ -128,6 +134,7 @@ namespace NINA.ObservatoryPlanner.Core {
         private volatile bool inEnd;
         private volatile bool nightActive;
         private volatile bool waitingForTarget;
+        private volatile bool mountLostRequested;
         private int? beginDone;
         private PlannerTarget current;
 
@@ -223,6 +230,19 @@ namespace NINA.ObservatoryPlanner.Core {
             }
         }
 
+        /// <summary>
+        /// The mount was lost (its software stopped) during 1 Begin, 2 Start of target or imaging: interrupt whatever runs and
+        /// recover the mount. Ignored in 4 End and while nothing runs.
+        /// </summary>
+        public void MountLost() {
+            lock (gate) {
+                if (inEnd || !nightActive || mountLostRequested) { return; }
+                mountLostRequested = true;
+                log.Info("Mount lost: interrupting for the mount recovery");
+                interrupt.Cancel();
+            }
+        }
+
         /// <summary>Cancels a pause that has not happened yet.</summary>
         public void CancelPause() {
             lock (gate) {
@@ -253,7 +273,7 @@ namespace NINA.ObservatoryPlanner.Core {
             if (kind == StageKind.End) { inEnd = true; }
             try {
                 if (continueFrom is int done) { await hardware.ContinueStage(kind, done, token); } else { await hardware.RunStage(kind, token); }
-            } catch (Exception) when (kind == StageKind.Begin && pauseRequested == PauseKind.Now && !stopRequested) {
+            } catch (Exception) when (kind == StageKind.Begin && (pauseRequested == PauseKind.Now || mountLostRequested) && !stopRequested) {
                 beginDone = hardware.FinishedSteps(StageKind.Begin); // Start sequence continues 1 Begin from the next step
                 throw;
             } finally {
@@ -293,6 +313,14 @@ namespace NINA.ObservatoryPlanner.Core {
             var skipBegin = false;
             var reopen = false;
             int? resumeBegin = null;
+            if (start == StartKind.Resume && hardware.MountPositionUnknown) {
+                log.Phase(PlannerPhase.Connecting, "Start sequence: the mount position is unknown, so the mount is recovered first");
+                if (!await hardware.RecoverMount(token)) {
+                    PausedReason = RecoveryFailed;
+                    return PauseHere(resume, "Still paused. " + PausedReason);
+                }
+                resume = resume == null ? null : resume with { MountRaHours = null, MountDecDeg = null, ImagingStarted = false };
+            }
             if (start == StartKind.Resume && resume?.BeginDone is int done) {
                 // paused during 1 Begin: it continues from the next step (it connects the devices itself)
                 if (options.RunMode == RunMode.WithSafety && !IsSafe()) {
@@ -325,7 +353,7 @@ namespace NINA.ObservatoryPlanner.Core {
                     log.Phase(PlannerPhase.Finished, "Finished: nothing to image tonight, so 1 Begin and 4 End did not run");
                     return RunOutcome.Finished;
                 }
-                var r = await RunNight(token, watchSafety: false, skipBegin, resume, resumeBegin);
+                var r = await RunNightRecovering(token, watchSafety: false, skipBegin, resume, resumeBegin, false);
                 return Outcome(r, r == NightResult.StoppedForNight
                     ? "Stopped for the night: the guide star was lost and 4 End has run"
                     : "Finished: all targets are done and 4 End has run");
@@ -353,7 +381,7 @@ namespace NINA.ObservatoryPlanner.Core {
                         continue;
                     }
                 }
-                var result = await RunNight(token, watchSafety: true, skipBegin, resume, resumeBegin, reopen);
+                var result = await RunNightRecovering(token, watchSafety: true, skipBegin, resume, resumeBegin, reopen);
                 skipBegin = false;
                 resumeBegin = null;
                 resume = null;
@@ -409,6 +437,35 @@ namespace NINA.ObservatoryPlanner.Core {
                 point != null ? point.ImagingStarted : current != null && hardware.ImagingStarted(current));
             log.Phase(PlannerPhase.Paused, message, current);
             return RunOutcome.Paused;
+        }
+
+        public const string RecoveryFailed = "Mount recovery failed: the mount position is unknown. In GS Server: connect and run AutoHome, then press Start sequence.";
+
+        /// <summary>
+        /// Runs the night; when the mount is lost, recovers it (reconnect, AutoHome, unpark) and continues: an interrupted
+        /// 1 Begin from its next step, otherwise with 2 Start of target. When the recovery fails the run pauses.
+        /// </summary>
+        private async Task<NightResult> RunNightRecovering(CancellationToken token, bool watchSafety, bool skipBegin, PausePoint resume, int? resumeBegin, bool reopen) {
+            while (true) {
+                var r = await RunNight(token, watchSafety, skipBegin, resume, resumeBegin, reopen);
+                if (r != NightResult.MountLost) { return r; }
+                var lostInBegin = beginDone;
+                var lostOn = current;
+                log.Phase(PlannerPhase.Connecting, "Mount lost: recovering the mount (reconnect, AutoHome, unpark)", lostOn);
+                if (await hardware.RecoverMount(token)) {
+                    lock (gate) { interrupt = new CancellationTokenSource(); mountLostRequested = false; }
+                    if (lostInBegin is int d) { resumeBegin = d; skipBegin = false; } else { resumeBegin = null; skipBegin = true; }
+                    resume = null;
+                    reopen = false;
+                    continue;
+                }
+                lock (gate) { mountLostRequested = false; }
+                PausedReason = RecoveryFailed;
+                current = lostOn;
+                Paused = null;
+                PauseHere(new PausePoint(lostOn?.Id, lostOn?.Name, null, null, clock.Now, lostInBegin, false), "Paused. " + RecoveryFailed);
+                return NightResult.Paused;
+            }
         }
 
         private enum CloseUpEnd { Reopen, Ended, NightOver, Stopped }
@@ -653,6 +710,8 @@ namespace NINA.ObservatoryPlanner.Core {
             } catch (Exception) when (unsafeHit && !token.IsCancellationRequested) {
                 // Interrupted by the weather. NINA instructions may surface this as a cancellation or as their own error.
                 return await ShutForWeather();
+            } catch (Exception) when (mountLostRequested && !stopRequested && !token.IsCancellationRequested) {
+                return NightResult.MountLost;
             } catch (Exception) when (stopRequested && !token.IsCancellationRequested) {
                 log.Phase(PlannerPhase.End, "4 End (stopped)");
                 await Stage(StageKind.End, token);

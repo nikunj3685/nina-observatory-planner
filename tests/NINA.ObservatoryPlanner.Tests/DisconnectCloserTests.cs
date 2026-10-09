@@ -36,6 +36,7 @@ namespace NINA.ObservatoryPlanner.Tests {
             public FakePhd2 Phd2;
             public bool SequenceRunning = true;
             public bool GuiderIsPhd2 = true;
+            public bool MountDisconnectIntended = true;
             public bool GuiderConnected = true;
             public string MountProgram = @"C:\Program Files\GSS\GS.Server.exe";
             public int MountExitsAfterSeconds = 2;
@@ -44,7 +45,7 @@ namespace NINA.ObservatoryPlanner.Tests {
 
             public Rig() {
                 Phd2 = new FakePhd2(Calls);
-                Closer = new DisconnectCloser(Options, () => SequenceRunning, () => GuiderIsPhd2, () => GuiderConnected,
+                Closer = new DisconnectCloser(Options, () => SequenceRunning, () => MountDisconnectIntended, () => GuiderIsPhd2, () => GuiderConnected,
                     async () => { Calls.Add("nina disconnects guider"); GuiderConnected = false; await Closer.OnGuiderDisconnected(); },
                     Phd2, () => MountProgram, _ => Waited < MountExitsAfterSeconds,
                     (d, t) => { Waited += (int)d.TotalSeconds; return Task.CompletedTask; }, m => Calls.Add("info: " + m), Warnings.Add);
@@ -89,7 +90,7 @@ namespace NINA.ObservatoryPlanner.Tests {
         public async Task The_disconnect_NINA_does_while_connecting_is_ignored() {
             // the live rig log, 1 Begin: Connect All raises "mount disconnected" before connecting; PHD2 must not be closed
             var rig = new Rig();
-            var fresh = new DisconnectCloser(rig.Options, () => true, () => true, () => true, () => Task.CompletedTask, rig.Phd2,
+            var fresh = new DisconnectCloser(rig.Options, () => true, () => true, () => true, () => true, () => Task.CompletedTask, rig.Phd2,
                 () => rig.MountProgram, _ => false, (d, t) => Task.CompletedTask, m => rig.Calls.Add("info: " + m), rig.Warnings.Add);
             await fresh.OnMountDisconnected();
             await fresh.OnGuiderDisconnected();

@@ -456,7 +456,7 @@ namespace NINA.ObservatoryPlanner.Nina {
         /// </summary>
         private void WatchDisconnects() {
             try {
-                var closer = new DisconnectCloser(Options, SequenceRunning,
+                var closer = new DisconnectCloser(Options, SequenceRunning, () => IsDisconnectStepRunning("Mount"),
                     () => (Nina.Profile.ActiveProfile.GuiderSettings.GuiderName ?? "").StartsWith("PHD2", StringComparison.OrdinalIgnoreCase),
                     () => Nina.Guider.GetInfo()?.Connected == true, () => Nina.Guider.Disconnect(),
                     new Phd2Client(() => (Nina.Profile.ActiveProfile.GuiderSettings.PHD2ServerUrl, Nina.Profile.ActiveProfile.GuiderSettings.PHD2ServerPort)),
@@ -467,9 +467,82 @@ namespace NINA.ObservatoryPlanner.Nina {
                 if (Nina.Telescope.GetInfo()?.Connected == true) { closer.MountConnected(); }
                 Nina.Guider.Connected += (_, _) => { closer.GuiderConnected(); return Task.CompletedTask; };
                 Nina.Telescope.Connected += (_, _) => { closer.MountConnected(); return Task.CompletedTask; };
+                mountConnectedForRecovery = Nina.Telescope.GetInfo()?.Connected == true;
+                Nina.Telescope.Connected += (_, _) => { mountConnectedForRecovery = true; return Task.CompletedTask; };
+                Nina.Telescope.Disconnected += (_, _) => { try { OnMountDisconnectedForRecovery(); } catch (Exception ex) { Logger.Error(ex); } return Task.CompletedTask; };
                 Nina.Guider.Disconnected += (_, _) => closer.OnGuiderDisconnected();
                 Nina.Telescope.Disconnected += (_, _) => closer.OnMountDisconnected();
             } catch (Exception ex) { Logger.Error(ex); }
+        }
+
+        // ---------- mount recovery (GS Server) ----------
+        private bool mountPositionUnknown;
+        private volatile bool mountConnectedForRecovery;
+
+        /// <summary>The mount was lost while not parked: its position is unknown until AutoHome ran.</summary>
+        public bool MountPositionUnknown { get => mountPositionUnknown; internal set => Set(ref mountPositionUnknown, value); }
+
+        /// <summary>NINA's mount is GS Server (the recovery uses its AutoHome).</summary>
+        public bool MountIsGss {
+            get { try { return Nina?.Profile?.ActiveProfile?.TelescopeSettings?.Id == GssAutoHome.TelescopeId; } catch (Exception) { return false; } }
+        }
+
+        /// <summary>The position is unknown and the mount is not connected; a mount connected again (e.g. after AutoHome by hand) counts as known.</summary>
+        internal bool MountPositionUnknownNow() {
+            if (!MountPositionUnknown) { return false; }
+            if (Nina?.Telescope?.GetInfo()?.Connected == true) {
+                MountPositionUnknown = false;
+                Log.Info("The mount is connected again: its position is taken as known");
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>True (and noted) when the roof must stay open: the mount position is unknown and "close anyway" is off.</summary>
+        internal bool RoofMustStayOpen(string what) {
+            if (!MountPositionUnknown || Options.CloseRoofWhenRecoveryFails) { return false; }
+            var text = $"{what}: the dome/roof was NOT closed, because the mount position is unknown (it may not be clear of the roof). Close it yourself, or turn on \"Close the dome/roof anyway\".";
+            Log.Info(text);
+            AddEndProblem(text);
+            return true;
+        }
+
+        /// <summary>4 End with the mount position unknown and "close anyway" off: its Close Dome steps are skipped (this run only).</summary>
+        internal void SkipRoofIfMountUnknown(NINA.Sequencer.Container.ISequenceContainer stage) {
+            var closes = NinaPlannerHardware.Descendants(stage).Where(i => i is NINA.Sequencer.SequenceItem.Dome.CloseDomeShutter && i.Status == NINA.Core.Enum.SequenceEntityStatus.CREATED).ToList();
+            if (closes.Count == 0 || !RoofMustStayOpen("4 End")) { return; }
+            foreach (var c in closes) { c.Status = NINA.Core.Enum.SequenceEntityStatus.SKIPPED; }
+        }
+
+        /// <summary>A Disconnect Equipment step for this device (or Disconnect All) is running in NINA's sequence.</summary>
+        internal bool IsDisconnectStepRunning(string device) {
+            try {
+                if (Workflows.CurrentRoot() is not NINA.Sequencer.Container.ISequenceRootContainer root) { return false; }
+                return root.GetCurrentRunningItems().Any(i => i.GetType().Name == "DisconnectAllEquipment"
+                    || (InstructionFactory.DeviceOf(i) == device && i is not NINA.Sequencer.SequenceItem.Connect.ConnectEquipment));
+            } catch (Exception) { return false; }
+        }
+
+        /// <summary>The mount disconnected: when no Disconnect step asked for it, GS Server stopped; recover or note it.</summary>
+        private void OnMountDisconnectedForRecovery() {
+            if (!mountConnectedForRecovery) { return; } // NINA's disconnect before connecting
+            mountConnectedForRecovery = false;
+            if (IsDisconnectStepRunning("Mount")) { return; }
+            if (!MountIsGss || !Options.MountRecovery) { return; }
+            if (!IsRunning && !IsPaused) { return; }
+            if (Phase is PlannerPhase.ClosedUp or PlannerPhase.WaitingForSafe or PlannerPhase.WaitingForNextNight) { return; } // parked
+            MountPositionUnknown = true;
+            Log.Info("Mount connection lost without a Disconnect step (GS Server may have stopped): the mount position is unknown");
+            var e = engine;
+            if (IsRunning && e != null && !e.InEnd && e.PauseAllowed) {
+                e.MountLost();
+            } else if (e?.InEnd == true) {
+                AddEndProblem("Mount connection lost during 4 End: the mount position is unknown.");
+                var end = ActiveContainer?.Stage(StageKind.End);
+                if (end != null) { _ = Ui.Run(() => SkipRoofIfMountUnknown(end)); }
+            } else {
+                AddEndProblem("Mount connection lost while paused: Start sequence recovers the mount (reconnect, AutoHome) before it continues.");
+            }
         }
 
         /// <summary>Closes PHD2 / the mount software on disconnect (null without NINA).</summary>

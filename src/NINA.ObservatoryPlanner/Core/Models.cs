@@ -202,6 +202,9 @@ namespace NINA.ObservatoryPlanner.Core {
         private bool nightLimitEnabled = true;
         private SunLimit nightLimit = SunLimit.CivilDawn;
         private SunLimit closeUpEnd = SunLimit.CivilDawn;
+        private bool mountRecovery = true;
+        private int mountRecoveryTries = 3;
+        private bool closeRoofWhenRecoveryFails;
         private string workflowName;
         private int safeDelaySeconds;
         private bool autoStartOnLaunch;
@@ -234,6 +237,11 @@ namespace NINA.ObservatoryPlanner.Core {
         [JsonProperty] public SunLimit NightLimit { get => nightLimit; set => Set(ref nightLimit, value); }
         /// <summary>Closed up for the weather: the night has ended (4 End runs) once the Sun rises above this in the morning.</summary>
         [JsonProperty] public SunLimit CloseUpEnd { get => closeUpEnd; set => Set(ref closeUpEnd, value); }
+        /// <summary>GS Server only: if the mount is lost during 1 Begin, 2 Start of target or imaging, reconnect, AutoHome and continue.</summary>
+        [JsonProperty] public bool MountRecovery { get => mountRecovery; set => Set(ref mountRecovery, value); }
+        [JsonProperty] public int MountRecoveryTries { get => mountRecoveryTries; set => Set(ref mountRecoveryTries, Math.Max(1, Math.Min(10, value))); }
+        /// <summary>When the mount position is unknown (recovery failed or not possible), close the dome/roof anyway when needed.</summary>
+        [JsonProperty] public bool CloseRoofWhenRecoveryFails { get => closeRoofWhenRecoveryFails; set => Set(ref closeRoofWhenRecoveryFails, value); }
 
         /// <summary>With safety: once the monitor reports safe, wait this long (it must stay safe) before 1 Begin.</summary>
         [JsonProperty] public int SafeDelaySeconds { get => safeDelaySeconds; set => Set(ref safeDelaySeconds, Math.Max(0, value)); }
@@ -268,6 +276,7 @@ namespace NINA.ObservatoryPlanner.Core {
             RunMode = o.RunMode; GapMinutes = o.GapMinutes; GapMount = o.GapMount; GapCloseDome = o.GapCloseDome;
             DefaultDelayFirst = o.DefaultDelayFirst; DefaultDelayBetween = o.DefaultDelayBetween; DefaultOrder = o.DefaultOrder;
             ConfirmDeleteTarget = o.ConfirmDeleteTarget; ConfirmDeleteExposure = o.ConfirmDeleteExposure; NightLimitEnabled = o.NightLimitEnabled; NightLimit = o.NightLimit; CloseUpEnd = o.CloseUpEnd;
+            MountRecovery = o.MountRecovery; MountRecoveryTries = o.MountRecoveryTries; CloseRoofWhenRecoveryFails = o.CloseRoofWhenRecoveryFails;
             SafeDelaySeconds = o.SafeDelaySeconds; AutoStartOnLaunch = o.AutoStartOnLaunch; AutofocusAfterBegin = o.AutofocusAfterBegin;
             GuideLostWatch = o.GuideLostWatch; GuideLostWaitSeconds = o.GuideLostWaitSeconds; GuideLostAction = o.GuideLostAction;
             GuidingCheck = o.GuidingCheck; GuidingLimitPixels = o.GuidingLimitPixels; GuidingCheckWaitSeconds = o.GuidingCheckWaitSeconds;

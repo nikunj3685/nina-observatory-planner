@@ -158,6 +158,7 @@ namespace NINA.ObservatoryPlanner.UI {
                 RefreshStages();
                 RefreshSafety();
                 RaisePropertyChanged(nameof(GuidingLimitArcsec));
+                RaisePropertyChanged(nameof(MountIsGss));
                 // save the workflow whenever it changes, so a NINA restart brings back the exact stages
                 if (!planner.IsRunning) {
                     try { if (workflows.AutoSave()) { RaiseWorkflow(); } } catch (Exception ex) { Logger.Error(ex); }
@@ -200,6 +201,9 @@ namespace NINA.ObservatoryPlanner.UI {
         public string GuidingLimitArcsec => planner.GuiderPixelScale is double scale
             ? $"≈ {Options.GuidingLimitPixels * scale:0.00}″ with PHD2's pixel scale of {scale:0.00}″/px"
             : "The limit in arcseconds is shown here while PHD2 is connected";
+
+        /// <summary>NINA's mount is GS Server: the mount recovery options apply.</summary>
+        public bool MountIsGss => planner.MountIsGss;
 
         /// <summary>4 End steps that failed the last time it ran, or null.</summary>
         public string EndProblems => planner.EndProblems;

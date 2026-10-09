@@ -1141,6 +1141,25 @@
 
                                 <Border Margin="0,0,0,12" Style="{StaticResource OP_Box}">
                                     <StackPanel>
+                                        <TextBlock Margin="0,0,0,6" Style="{StaticResource OP_Heading}" Text="MOUNT RECOVERY (GS SERVER)" />
+                                        <TextBlock Style="{StaticResource OP_Hint}" Text="Available when the mount in NINA is GS Server, with a mount that has home sensors (e.g. CQ-350 Pro)." Visibility="{Binding MountIsGss, Converter={StaticResource OP_BoolCollapsed}}" />
+                                        <StackPanel IsEnabled="{Binding MountIsGss}">
+                                            <CheckBox Margin="0,4,0,0" Content="If GS Server stops during 1 Begin, 2 Start of target or imaging, recover the mount automatically" IsChecked="{Binding Options.MountRecovery}" Style="{StaticResource OP_Check}" />
+                                            <StackPanel Margin="23,4,0,0" IsEnabled="{Binding Options.MountRecovery}" Orientation="Horizontal">
+                                                <TextBlock VerticalAlignment="Center" Text="Try up to " />
+                                                <TextBox Width="40" Text="{Binding Options.MountRecoveryTries}" />
+                                                <TextBlock VerticalAlignment="Center" Text=" times, 10 s apart" />
+                                            </StackPanel>
+                                            <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="Reconnect the mount (this starts GS Server), AutoHome with the home sensors through GS Server's API, unpark, then continue: an interrupted 1 Begin from its next step, otherwise 2 Start of target. Not during 4 End. While paused, closed up or waiting it runs when the run continues, and only if the mount is not connected." />
+                                            <TextBlock Margin="0,10,0,2" Text="If the recovery fails (the mount position is unknown):" />
+                                            <CheckBox Margin="0,2,0,0" Content="Close the dome/roof anyway when it has to close" IsChecked="{Binding Options.CloseRoofWhenRecoveryFails}" Style="{StaticResource OP_Check}" />
+                                            <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="Off: the dome/roof is left open and a red note is shown, because the telescope may not be clear of it. The run pauses; in GS Server connect and run AutoHome, then press Start sequence." />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,0,0,12" Style="{StaticResource OP_Box}">
+                                    <StackPanel>
                                         <TextBlock Margin="0,0,0,6" Style="{StaticResource OP_Heading}" Text="WHEN DISCONNECTING" />
                                         <CheckBox Content="Close PHD2 when the guider is disconnected" IsChecked="{Binding Options.CloseGuiderAppOnDisconnect}" Style="{StaticResource OP_Check}" />
                                         <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="PHD2 disconnects its own guide camera and mount, then closes. NINA's disconnect alone leaves PHD2 open with its equipment connected." />

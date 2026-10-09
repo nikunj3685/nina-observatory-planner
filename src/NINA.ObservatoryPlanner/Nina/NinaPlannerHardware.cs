@@ -113,7 +113,11 @@ namespace NINA.ObservatoryPlanner.Nina {
                 stage.ResetAll();
                 foreach (var item in stage.GetItemsSnapshot().Take(done).Where(i => i.Status == SequenceEntityStatus.CREATED)) { item.Status = SequenceEntityStatus.FINISHED; }
             });
-            if (kind == StageKind.End) { planner.SetEndProblems(null); planner.OnEndStarting(); }
+            if (kind == StageKind.End) {
+                planner.SetEndProblems(null);
+                planner.OnEndStarting();
+                await Ui.Run(() => planner.SkipRoofIfMountUnknown(stage));
+            }
             if (kind == StageKind.Begin) { planner.OnBeginStarting(); }
             try {
                 await stage.Run(progress, token);
@@ -196,9 +200,26 @@ namespace NINA.ObservatoryPlanner.Nina {
             return ok;
         }
 
+        public bool MountPositionUnknown => planner.MountPositionUnknownNow();
+
+        public async Task<bool> RecoverMount(CancellationToken token) {
+            var recovery = new MountRecovery(
+                async t => { await RunStandalone(F.Connect("Mount"), t, protect: true); return planner.Nina.Telescope.GetInfo()?.Connected == true; },
+                t => GssAutoHome.Run(t),
+                async t => {
+                    if (planner.Nina.Telescope.GetInfo()?.AtPark == true) { await RunStandalone(F.Unpark(), t, protect: true); }
+                    return planner.Nina.Telescope.GetInfo()?.AtPark != true;
+                },
+                (d, t) => Task.Delay(d, t), m => planner.Log.Info(m));
+            var ok = await recovery.Run(planner.Options.MountRecoveryTries, token);
+            planner.MountPositionUnknown = !ok;
+            if (!ok) { planner.AddEndProblem(PlannerEngine.RecoveryFailed); }
+            return ok;
+        }
+
         public Task<bool> CloseUp(CancellationToken token) {
             var steps = new List<GapStep> { GapStep.StopGuiding, GapStep.StopTracking, GapStep.Park };
-            if (DomeConnected()) { steps.Add(GapStep.CloseDome); }
+            if (DomeConnected() && !planner.RoofMustStayOpen("Closing up for the weather")) { steps.Add(GapStep.CloseDome); }
             return RunWeatherSteps("Closing up for the weather", steps, new HashSet<GapStep> { GapStep.Park, GapStep.CloseDome }, token);
         }
 

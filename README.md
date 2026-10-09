@@ -25,6 +25,7 @@ The four stages of the night are ordinary Advanced Sequencer instruction sets yo
 - Weather: 4 End on unsafe, or close up and wait (park, close the dome, keep the camera cold) with a time limit; a night setting (sun altitude) keeps imaging out of daylight
 - Guiding: autofocus after 1 Begin and on filter change (planner trigger), guide star lost handling, guiding error check in pixels
 - 4 End always runs when a step stops NINA's sequence; failed 4 End steps are shown; PHD2 and the mount software (e.g. GS Server) close on disconnect
+- GS Server: automatic mount recovery after a crash (reconnect, AutoHome with the home sensors, continue) and a GS Server AutoHome instruction
 - Countdowns, wait after safe, gap handling between targets, manual autofocus before the next frame, Info (!) page about editing during a run
 - Per-profile target lists, workflows and options; the last workflow is reopened at startup and shown in the Advanced Sequencer; optional auto-start when NINA starts
 

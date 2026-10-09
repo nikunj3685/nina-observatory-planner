@@ -164,6 +164,7 @@ namespace NINA.ObservatoryPlanner.Nina {
     internal sealed class DisconnectCloser {
         private readonly PlannerOptions options;
         private readonly Func<bool> sequenceRunning;
+        private readonly Func<bool> mountDisconnectIntended;
         private readonly Func<bool> guiderIsPhd2;
         private readonly Func<bool> guiderConnectedInNina;
         private readonly Func<Task> disconnectNinaGuider;
@@ -174,11 +175,12 @@ namespace NINA.ObservatoryPlanner.Nina {
         private readonly Action<string> info;
         private readonly Action<string> warn;
 
-        public DisconnectCloser(PlannerOptions options, Func<bool> sequenceRunning, Func<bool> guiderIsPhd2, Func<bool> guiderConnectedInNina, Func<Task> disconnectNinaGuider,
+        public DisconnectCloser(PlannerOptions options, Func<bool> sequenceRunning, Func<bool> mountDisconnectIntended, Func<bool> guiderIsPhd2, Func<bool> guiderConnectedInNina, Func<Task> disconnectNinaGuider,
                                 IPhd2Control phd2, Func<string> mountProgram, Func<string, bool> programRunning,
                                 Func<TimeSpan, CancellationToken, Task> delay, Action<string> info, Action<string> warn) {
             this.options = options;
             this.sequenceRunning = sequenceRunning;
+            this.mountDisconnectIntended = mountDisconnectIntended;
             this.guiderIsPhd2 = guiderIsPhd2;
             this.guiderConnectedInNina = guiderConnectedInNina;
             this.disconnectNinaGuider = disconnectNinaGuider;
@@ -224,6 +226,8 @@ namespace NINA.ObservatoryPlanner.Nina {
         public async Task OnMountDisconnected() {
             if (!mountWasConnected) { return; }
             mountWasConnected = false;
+            // a lost mount (its software stopped) is not a disconnect: PHD2 must stay open for the recovery
+            if (!mountDisconnectIntended()) { return; }
             if (!options.CloseMountAppOnDisconnect || !sequenceRunning()) { return; }
             // PHD2 first: it guides through the mount's program and keeps it open
             if (guiderIsPhd2() && await phd2.IsRunning(CancellationToken.None)) {
