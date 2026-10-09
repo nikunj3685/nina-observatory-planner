@@ -5,3 +5,5 @@ obj/
 TestResults/
 tools/e2e/out/
 tools/e2e/__pycache__/
+# the user's rig logs (private)
+debuglogs/

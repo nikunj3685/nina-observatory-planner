@@ -35,11 +35,14 @@ NINA.
 ## Git and release state
 
 - The 1.0.0.0 release (tag `1.0.0.0`) is the published one. The work below was
-  committed on 2026-10-08 on branch `improvements-from-test-nights`, merged into
-  `main` and pushed. **No new version, tag or release** (the user asked to keep
+  committed on 2026-10-08/09 on branch `improvements-from-test-nights`, fast-forwarded
+  into `main` after each change, and pushed (both branches are at the same commit). **No new version, tag or release** (the user asked to keep
   1.0.0.0): the csproj stays at 1.0.0.0 and the CHANGELOG section is
-  "Unreleased". `Feature-Improvement List.txt` (the user's own list) is not
-  committed.
+  "Unreleased". `Feature-Improvement List.txt` (the user's own list) and
+  `debuglogs/` (the user's rig logs, now in .gitignore) are not committed.
+- **Installing on the rig:** the user copies a zip of the Release build from this PC
+  (`Desktop\ObservatoryPlanner-main-<commit>.zip`) into
+  `%LOCALAPPDATA%\NINA\Plugins\3.0.0\` on the rig. The GitHub release is still 1.0.0.0.
 - The manifest for 1.0.0.0 is on branch `ObservatoryPlanner/1.0.0.0` of the fork
   `nikunj3685/nina.plugin.manifests`
   (`manifests/o/ObservatoryPlanner/3.2.0/manifest.json`). The PR is **not** opened.
@@ -48,11 +51,16 @@ NINA.
   tag it, push the tag, then replace the manifest on a new fork branch and
   validate it with `node gather.js`. The steps are in `PUBLISHING.md`.
 
-## Test results (2026-10-08)
+## Test results (2026-10-08/09)
 
 - **Unit tests:** 209, all passing.
-- **Simulator e2e:** 78/78 (nosafety 4, safety 22, ui 11, negative 11, timing 7,
-  single 5, pause 11, restart 7).
+- **Simulator e2e:** 78/78 on 2026-10-08 (nosafety 4, safety 22, ui 11, negative 11,
+  timing 7, single 5, pause 11, restart 7); safety 22/22 and pause 11/11 again on
+  2026-10-09 after the mount recovery changed the engine loop.
+- **Still to test on the real rig:** PHD2 closing at 4 End (IPv4 fix), GS Server
+  recovery with a real AutoHome on the CQ-350 (kill GS.Server.exe mid-slew by
+  daylight), the weather close-up, the guiding check / guide star lost with a real
+  PHD2, Pause during a real meridian flip, and button text in NINA's theme.
 - **Fixed during this round:**
   - "Close PHD2 on disconnect" would also close a PHD2 open next to NINA when
     NINA's guider is not PHD2. It now checks that GuiderName starts with
