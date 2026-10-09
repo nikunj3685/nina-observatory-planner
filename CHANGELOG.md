@@ -20,6 +20,7 @@ Fixes and improvements from the first test nights.
 - **Exposure columns** are now Priority, Run, Type, Filter, Exposure (s), Binning, Repeat, Progress (Count is renamed Repeat).
 - **Target list icons:** ▶ Imaging (the run is on the target now), ‖ Paused (checked, not being imaged; orange when the run is paused on it), ■ Stopped (unchecked, or no exposures to take), ✔ Complete. Hover over an icon for the word. Before, ▶ marked the next target even when nothing was running, and ‖ meant unchecked.
 - **Slew now / Center now** offers to unpark a parked mount first, and the 1 Begin check warns when nothing in it unparks the mount (GS Server, for example, starts parked and refuses to slew).
+- **4 End check:** warns only when a step needs a device that an earlier step already disconnected (e.g. Warm Camera after Disconnect Camera, or anything after Disconnect All). Warm Camera after Disconnect Guider is no longer reported.
 - **▶ marks the exposure row** being imaged.
 - **Pause is disabled while 4 End runs**, which always runs to the end.
 - **The last workflow shows in the Advanced Sequencer at startup.** It was loaded, but NINA's Sequencer tab stayed on its overview page.

@@ -68,14 +68,39 @@ namespace NINA.ObservatoryPlanner.Core {
                     : "NINA's \"AF After Filter Change\" compares with the filter of the last autofocus, and can miss the first filter change after a new target, a pause or a weather stop. Use \"AF after filter change (planner)\" instead.");
             }
             if (stage == StageKind.End) {
-                var firstDisconnect = items.ToList().FindIndex(i => i.IsDisconnect);
-                var late = firstDisconnect < 0 ? null : items.Skip(firstDisconnect + 1).FirstOrDefault(i => i.NeedsEquipment);
-                if (late != null) {
-                    warnings.Add($"\"{late.Name}\" runs after equipment starts disconnecting. Move it above \"{items[firstDisconnect].Name}\".");
+                // only a step whose own device was already disconnected is a problem (Warm Camera after Disconnect Guider is fine)
+                var gone = new Dictionary<string, StageEntry>();
+                StageEntry all = null;
+                foreach (var item in items) {
+                    if (item.TypeName == "DisconnectAllEquipment") { all ??= item; continue; }
+                    if (item.TypeName == "DisconnectEquipment" && item.Device != null) { gone.TryAdd(item.Device, item); continue; }
+                    if (!item.NeedsEquipment) { continue; }
+                    if (all != null) {
+                        warnings.Add($"\"{item.Name}\" runs after \"{all.Name}\", so its device is no longer connected. Move it above \"{all.Name}\".");
+                        break;
+                    }
+                    var device = DevicesOf(item.TypeName).FirstOrDefault(gone.ContainsKey);
+                    if (device != null) {
+                        warnings.Add($"\"{item.Name}\" needs the {Label(device)}, which \"{gone[device].Name}\" ({Label(device)}) has already disconnected. Move it above that step.");
+                        break;
+                    }
                 }
             }
             return warnings;
         }
+
+        /// <summary>The devices (as named by Connect / Disconnect Equipment) an instruction needs.</summary>
+        public static IReadOnlyList<string> DevicesOf(string typeName) => typeName switch {
+            "SwitchFilter" => new[] { "Filter Wheel" },
+            "MoveFocuserAbsolute" or "MoveFocuserRelative" or "MoveFocuserByTemperature" => new[] { "Focuser" },
+            "RunAutofocus" => new[] { "Camera", "Focuser" },
+            "MoveRotatorMechanical" => new[] { "Rotator" },
+            "SolveAndRotate" => new[] { "Camera", "Rotator" },
+            "UnparkScope" or "ParkScope" or "FindHome" or "SetTracking" or "SlewScopeToAltAz" or "SlewScopeToRaDec" => new[] { "Mount" },
+            "Center" or "CenterAndRotate" or "SolveAndSync" => new[] { "Camera", "Mount" },
+            "StartGuiding" or "StopGuiding" or "Dither" => new[] { "Guider" },
+            _ => new[] { "Camera" } // cooling, exposures and flats
+        };
 
         /// <summary>Type name of the planner's own filter-change autofocus trigger.</summary>
         public const string PlannerAfTrigger = "PlannerAutofocusOnFilterChange";

@@ -50,7 +50,7 @@ NINA.
 
 ## Test results (2026-10-08)
 
-- **Unit tests:** 192, all passing.
+- **Unit tests:** 193, all passing.
 - **Simulator e2e:** 78/78 (nosafety 4, safety 22, ui 11, negative 11, timing 7,
   single 5, pause 11, restart 7).
 - **Fixed during this round:**
@@ -74,7 +74,7 @@ Only the .NET 10 runtime is installed on this PC, so set roll-forward:
 
 ```bash
 export DOTNET_ROLL_FORWARD=LatestMajor
-dotnet test NINA.ObservatoryPlanner.slnx                     # 192 tests, all passing
+dotnet test NINA.ObservatoryPlanner.slnx                     # 193 tests, all passing
 dotnet build src/NINA.ObservatoryPlanner/NINA.ObservatoryPlanner.csproj -c Release
 ```
 
@@ -151,7 +151,7 @@ the simulated images have no stars.
 
 ## What changed this session (1.1.0.0, from `Feature-Improvement List.txt`)
 
-Done, unit-tested (192 passing) and installed, not committed or tested on the rig:
+Done, unit-tested (193 passing) and installed, not committed or tested on the rig:
 
 - **#1** Countdown during the wait after safe, and while waiting for the next target.
 - **#2** 4 End always runs when a step's error behaviour stops NINA's sequence. Failed
@@ -237,6 +237,10 @@ Done, unit-tested (192 passing) and installed, not committed or tested on the ri
   ▶ Imaging, ‖ Paused (grey when checked and idle, orange when the run is
   paused on it), ■ Stopped (unchecked, or TotalFrames 0), ✔ Complete.
   The tooltip gives the word.
+- **4 End check** is device-aware (`StageChecks.DevicesOf`): it warns only when a
+  step needs a device already disconnected earlier in the stage, or anything after
+  Disconnect All. The user declined an option to ignore NINA's "AF After Filter
+  Change" (2026-10-08): the stage 3 warning stays, and they swap it by hand.
 - **Info tab** (the ! next to the ⚙ gear, `SelectedPlannerTab` 3): notes on
   editing during a run and on adding sections in the Advanced Sequencer.
 

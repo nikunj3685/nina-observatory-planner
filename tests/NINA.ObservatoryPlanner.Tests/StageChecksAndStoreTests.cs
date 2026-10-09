@@ -34,7 +34,18 @@ namespace NINA.ObservatoryPlanner.Tests {
         [Test]
         public void Equipment_step_after_disconnect_warns() {
             var w = StageChecks.Check(StageKind.End, new[] { E("DisconnectEquipment", "Camera"), E("TakeExposure") }, new PlannerOptions());
-            w.Should().ContainSingle().Which.Should().Contain("runs after equipment starts disconnecting");
+            w.Should().ContainSingle().Which.Should().Contain("needs the Camera").And.Contain("has already disconnected");
+        }
+
+        [Test]
+        public void Disconnecting_another_device_first_is_fine_in_4_End() {
+            // the user's 4 End: the guider goes first, the camera warms, then the camera is disconnected
+            var end = new[] { E("DisconnectEquipment", "Guider"), E("WarmCamera"), E("DisconnectEquipment", "Camera"), E("DisconnectEquipment", "Mount") };
+            StageChecks.Check(StageKind.End, end, new PlannerOptions()).Should().BeEmpty();
+            var parkLate = new[] { E("DisconnectEquipment", "Mount"), E("ParkScope") };
+            StageChecks.Check(StageKind.End, parkLate, new PlannerOptions()).Should().ContainSingle().Which.Should().Contain("needs the Mount");
+            var afterAll = new[] { E("DisconnectAllEquipment"), E("WarmCamera") };
+            StageChecks.Check(StageKind.End, afterAll, new PlannerOptions()).Should().Contain(w2 => w2.Contains("runs after"));
         }
 
         [Test]
