@@ -111,6 +111,20 @@ namespace NINA.ObservatoryPlanner.Tests {
         }
 
         [Test]
+        public void Warning_messages_can_be_closed() {
+            var vm = new PlannerDockableVM(new Mock<IProfileService>().Object, planner);
+            planner.SetEndProblems("4 End: 1 step failed: Warm Camera.");
+            vm.EndProblems.Should().NotBeNull();
+            vm.DismissEndProblemsCommand.Execute(null);
+            vm.EndProblems.Should().BeNull();
+
+            planner.Options.RunMode = RunMode.WithoutSafety;
+            vm.NoSafetyWarningShown.Should().BeTrue();
+            vm.DismissWarningCommand.Execute("no-safety");
+            vm.NoSafetyWarningShown.Should().BeFalse();
+        }
+
+        [Test]
         public void Panel_template_renders_with_the_view_model() {
             var profile = new Mock<IProfileService>();
             var vm = new PlannerDockableVM(profile.Object, planner);

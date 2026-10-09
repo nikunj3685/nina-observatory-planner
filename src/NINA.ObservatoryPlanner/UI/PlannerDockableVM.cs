@@ -124,6 +124,13 @@ namespace NINA.ObservatoryPlanner.UI {
             GoInfoCommand = new Command(() => SelectedPlannerTab = 3);
             ApplyDefaultsToAllCommand = new Command(ApplyDefaultsToAll);
             ResetConfirmationsCommand = new Command(() => { Options.ConfirmDeleteTarget = true; Options.ConfirmDeleteExposure = true; });
+            DismissEndProblemsCommand = new Command(() => planner.SetEndProblems(null));
+            DismissWarningCommand = new Command(p => {
+                if (p is not string text || !dismissed.Add(text)) { return; }
+                RaisePropertyChanged(nameof(NoSafetyWarningShown));
+                UpdateRotateWarning();
+                RefreshStages();
+            });
 
             planner.PropertyChanged += (_, e) => Ui.Run(() => ServiceChanged(e.PropertyName));
             planner.ActiveContainerChanged += (_, _) => Ui.Run(() => { RefreshStages(); RaiseWorkflow(); });
@@ -430,6 +437,11 @@ namespace NINA.ObservatoryPlanner.UI {
         public ICommand GoInfoCommand { get; }
         public ICommand ApplyDefaultsToAllCommand { get; }
         public ICommand ResetConfirmationsCommand { get; }
+        public ICommand DismissEndProblemsCommand { get; }
+        /// <summary>✕ on a warning: hides that text until it changes or NINA restarts.</summary>
+        public ICommand DismissWarningCommand { get; }
+        private readonly HashSet<string> dismissed = new();
+        public bool NoSafetyWarningShown => WithoutSafety && !dismissed.Contains("no-safety");
 
         /// <summary>Test hook: opens a dialog by name (it stays open until "close dialogs").</summary>
         private void OpenDialog(string name) {
@@ -653,7 +665,8 @@ namespace NINA.ObservatoryPlanner.UI {
 
         private void UpdateRotateWarning() {
             var triggers = WorkflowLibrary.Describe(planner.ActiveContainer?.Stage(StageKind.Triggers));
-            RotateAfWarning = StageChecks.RotateWithFilterAf(Targets, triggers);
+            var warning = StageChecks.RotateWithFilterAf(Targets, triggers);
+            RotateAfWarning = warning != null && dismissed.Contains(warning) ? null : warning;
         }
 
         // ---------- workflow (the four stages) ----------
@@ -768,7 +781,7 @@ namespace NINA.ObservatoryPlanner.UI {
         }
 
         private void RaiseModeProperties() {
-            foreach (var p in new[] { nameof(WithSafety), nameof(WithoutSafety), nameof(ModeSummary), nameof(CycleHint), nameof(TargetChips) }) { RaisePropertyChanged(p); }
+            foreach (var p in new[] { nameof(WithSafety), nameof(WithoutSafety), nameof(NoSafetyWarningShown), nameof(ModeSummary), nameof(CycleHint), nameof(TargetChips) }) { RaisePropertyChanged(p); }
             RaiseStatus();
         }
 
@@ -824,7 +837,7 @@ namespace NINA.ObservatoryPlanner.UI {
                 var entries = WorkflowLibrary.Describe(c.Stage(kind));
                 view.Lines = entries.Select((e, i) => new StageLine(i + 1, e.Category, e.Name, e.Summary)).ToList();
                 view.EmptyText = entries.Count == 0 ? $"No {(kind == StageKind.Triggers ? "triggers" : "instructions")}. This stage does nothing." : null;
-                view.Warnings = StageChecks.Check(kind, entries, Options);
+                view.Warnings = StageChecks.Check(kind, entries, Options).Where(w => !dismissed.Contains(w)).ToList();
             }
             UpdateRotateWarning();
         }

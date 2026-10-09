@@ -339,7 +339,10 @@
                     </StackPanel>
                     <!--  4 End steps that failed the last time it ran  -->
                     <Border Margin="0,8,12,0" DockPanel.Dock="Bottom" Style="{StaticResource OP_WarnBox}" Visibility="{Binding EndProblems, Converter={StaticResource OP_TextVisible}}">
-                        <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding EndProblems, StringFormat=⚠ {0}}" />
+                        <DockPanel>
+                            <Button Margin="8,0,0,0" Padding="2,0" VerticalAlignment="Top" Command="{Binding DismissEndProblemsCommand}" Content="✕" DockPanel.Dock="Right" Style="{StaticResource OP_Flat}" ToolTip="Close this message" />
+                            <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding EndProblems, StringFormat=⚠ {0}}" />
+                        </DockPanel>
                     </Border>
                     <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
                         <Border Padding="10,2" VerticalAlignment="Center" BorderBrush="{Binding PillBrush}" BorderThickness="1" CornerRadius="11">
@@ -713,7 +716,10 @@
                                                 <TextBlock Margin="6,0" VerticalAlignment="Center" Opacity="0.7" Text="{Binding RemainingText}" />
                                             </WrapPanel>
                                             <Border Style="{StaticResource OP_WarnBox}" Visibility="{Binding RotateAfWarning, Converter={StaticResource OP_TextVisible}}">
-                                                <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding RotateAfWarning, StringFormat=⚠ {0}}" />
+                                                <DockPanel>
+                                                    <Button Margin="8,0,0,0" Padding="2,0" VerticalAlignment="Top" Command="{Binding DismissWarningCommand}" CommandParameter="{Binding RotateAfWarning}" Content="✕" DockPanel.Dock="Right" Style="{StaticResource OP_Flat}" ToolTip="Close this message" />
+                                                    <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding RotateAfWarning, StringFormat=⚠ {0}}" />
+                                                </DockPanel>
                                             </Border>
                                         </StackPanel>
 
@@ -925,8 +931,11 @@
                                             <TextBlock FontSize="18" Foreground="{StaticResource OP_Accent}" Style="{StaticResource OP_Arrow}" Text="↺" ToolTip="Repeats" Visibility="{Binding WithSafety, Converter={StaticResource OP_BoolVisible}}" />
                                         </WrapPanel>
                                         <TextBlock Style="{StaticResource OP_Hint}" Text="{Binding CycleHint}" />
-                                        <Border Style="{StaticResource OP_WarnBox}" Visibility="{Binding WithoutSafety, Converter={StaticResource OP_BoolVisible}}">
-                                            <TextBlock Style="{StaticResource OP_WarnText}" Text="⚠ No safety monitor: nothing closes the dome or stops imaging for rain or clouds. Stay nearby while it runs." />
+                                        <Border Style="{StaticResource OP_WarnBox}" Visibility="{Binding NoSafetyWarningShown, Converter={StaticResource OP_BoolVisible}}">
+                                            <DockPanel>
+                                                <Button Margin="8,0,0,0" Padding="2,0" VerticalAlignment="Top" Command="{Binding DismissWarningCommand}" CommandParameter="no-safety" Content="✕" DockPanel.Dock="Right" Style="{StaticResource OP_Flat}" ToolTip="Close this message" />
+                                                <TextBlock Style="{StaticResource OP_WarnText}" Text="⚠ No safety monitor: nothing closes the dome or stops imaging for rain or clouds. Stay nearby while it runs." />
+                                            </DockPanel>
                                         </Border>
                                         <DockPanel Margin="0,10,0,0">
                                             <Button VerticalAlignment="Center" Command="{Binding LoadDefaultWorkflowCommand}" Content="Load a default workflow…" DockPanel.Dock="Right" Style="{StaticResource OP_Small}" />
@@ -979,7 +988,10 @@
                                                                 <ItemsControl.ItemTemplate>
                                                                     <DataTemplate>
                                                                         <Border Style="{StaticResource OP_WarnBox}">
-                                                                            <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding StringFormat=⚠ {0}}" />
+                                                                            <DockPanel>
+                                                                                <Button Margin="8,0,0,0" Padding="2,0" VerticalAlignment="Top" Command="{Binding DataContext.DismissWarningCommand, RelativeSource={RelativeSource AncestorType=TabControl}}" CommandParameter="{Binding}" Content="✕" DockPanel.Dock="Right" Style="{StaticResource OP_Flat}" ToolTip="Close this message" />
+                                                                                <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding StringFormat=⚠ {0}}" />
+                                                                            </DockPanel>
                                                                         </Border>
                                                                     </DataTemplate>
                                                                 </ItemsControl.ItemTemplate>
