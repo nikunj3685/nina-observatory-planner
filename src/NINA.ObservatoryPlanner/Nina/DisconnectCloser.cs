@@ -186,6 +186,17 @@ namespace NINA.ObservatoryPlanner.Nina {
             await phd2.ShutDown(closeApp: true, CancellationToken.None);
         }
 
+        /// <summary>
+        /// 4 End has finished and disconnects the guider: PHD2 may still be open although NINA's guider was never connected
+        /// in this run (then "Disconnect Equipment" raises no disconnect event). Close it now.
+        /// </summary>
+        public async Task OnEndFinished() {
+            if (!options.CloseGuiderAppOnDisconnect || guiderConnectedInNina() || !guiderIsPhd2()) { return; }
+            if (!await phd2.IsRunning(CancellationToken.None)) { return; }
+            info("4 End: the guider is disconnected but PHD2 is still open: PHD2 disconnects its equipment and closes");
+            await phd2.ShutDown(closeApp: true, CancellationToken.None);
+        }
+
         public async Task OnMountDisconnected() {
             if (!options.CloseMountAppOnDisconnect || !sequenceRunning()) { return; }
             // PHD2 first: it guides through the mount's program and keeps it open

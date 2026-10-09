@@ -119,7 +119,14 @@ namespace NINA.ObservatoryPlanner.Nina {
                 await stage.Run(progress, token);
             } finally {
                 NoteErrorStop(stage, PlannerStageContainer.Title(kind), kind == StageKind.End, token);
-                if (kind == StageKind.End) { ReportEnd(stage); }
+                if (kind == StageKind.End) {
+                    ReportEnd(stage);
+                    if (Descendants(stage).Any(i => i.Status != SequenceEntityStatus.DISABLED
+                            && (i.GetType().Name == "DisconnectAllEquipment" || InstructionFactory.DeviceOf(i) == "Guider" && i is not NINA.Sequencer.SequenceItem.Connect.ConnectEquipment))
+                        && planner.Closer != null) {
+                        try { await planner.Closer.OnEndFinished(); } catch (Exception ex) { Logger.Error(ex); }
+                    }
+                }
             }
         }
 

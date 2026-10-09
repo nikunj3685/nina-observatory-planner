@@ -84,6 +84,20 @@ namespace NINA.ObservatoryPlanner.Tests {
         }
 
         [Test]
+        public async Task PHD2_left_open_with_the_guider_never_connected_is_closed_when_4_End_finishes() {
+            var rig = new Rig { GuiderConnected = false };
+            await rig.Closer.OnEndFinished();
+            rig.Calls.Should().Contain("phd2 release+close");
+
+            var connected = new Rig { GuiderConnected = true };
+            await connected.Closer.OnEndFinished();
+            connected.Calls.Should().BeEmpty("a connected guider is closed by its own disconnect");
+            var other = new Rig { GuiderConnected = false, GuiderIsPhd2 = false };
+            await other.Closer.OnEndFinished();
+            other.Calls.Should().BeEmpty("NINA does not guide with PHD2");
+        }
+
+        [Test]
         public async Task Mount_first_in_4_End_still_closes_PHD2_before_the_mount_software() {
             var rig = new Rig();
             await rig.Closer.OnMountDisconnected();

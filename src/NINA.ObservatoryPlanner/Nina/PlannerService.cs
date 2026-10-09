@@ -462,10 +462,14 @@ namespace NINA.ObservatoryPlanner.Nina {
                     new Phd2Client(() => (Nina.Profile.ActiveProfile.GuiderSettings.PHD2ServerUrl, Nina.Profile.ActiveProfile.GuiderSettings.PHD2ServerPort)),
                     () => AscomDriverProgram.ExeFor(Nina.Profile.ActiveProfile.TelescopeSettings.Id), AscomDriverProgram.IsRunning,
                     (d, t) => Task.Delay(d, t), m => Log.Info(m), m => { Log.Info(m); Logger.Warning("Observatory Planner: " + m); AddEndProblem(m); });
+                Closer = closer;
                 Nina.Guider.Disconnected += (_, _) => closer.OnGuiderDisconnected();
                 Nina.Telescope.Disconnected += (_, _) => closer.OnMountDisconnected();
             } catch (Exception ex) { Logger.Error(ex); }
         }
+
+        /// <summary>Closes PHD2 / the mount software on disconnect (null without NINA).</summary>
+        internal DisconnectCloser Closer { get; private set; }
 
         /// <summary>NINA's Advanced Sequencer is running (the planner, or anything else in the sequence).</summary>
         private bool SequenceRunning() {

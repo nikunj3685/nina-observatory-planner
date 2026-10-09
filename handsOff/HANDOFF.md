@@ -50,7 +50,7 @@ NINA.
 
 ## Test results (2026-10-08)
 
-- **Unit tests:** 198, all passing.
+- **Unit tests:** 199, all passing.
 - **Simulator e2e:** 78/78 (nosafety 4, safety 22, ui 11, negative 11, timing 7,
   single 5, pause 11, restart 7).
 - **Fixed during this round:**
@@ -74,7 +74,7 @@ Only the .NET 10 runtime is installed on this PC, so set roll-forward:
 
 ```bash
 export DOTNET_ROLL_FORWARD=LatestMajor
-dotnet test NINA.ObservatoryPlanner.slnx                     # 198 tests, all passing
+dotnet test NINA.ObservatoryPlanner.slnx                     # 199 tests, all passing
 dotnet build src/NINA.ObservatoryPlanner/NINA.ObservatoryPlanner.csproj -c Release
 ```
 
@@ -151,7 +151,7 @@ the simulated images have no stars.
 
 ## What changed this session (1.1.0.0, from `Feature-Improvement List.txt`)
 
-Done, unit-tested (198 passing) and installed, not committed or tested on the rig:
+Done, unit-tested (199 passing) and installed, not committed or tested on the rig:
 
 - **#1** Countdown during the wait after safe, and while waiting for the next target.
 - **#2** 4 End always runs when a step's error behaviour stops NINA's sequence. Failed
