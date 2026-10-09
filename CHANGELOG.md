@@ -26,6 +26,7 @@ Fixes and improvements from the first test nights.
 - **Warning messages in the panel can be closed (✕):** failed 4 End steps, the stage checks, the rotate/autofocus warning and the no-safety-monitor warning. A closed warning comes back only when its text changes or NINA restarts.
 - **PHD2 closes at the end of 4 End** also when NINA's guider was never connected in that run (e.g. unsafe early in 1 Begin), so "Disconnect Equipment · Guider" found it already disconnected and raised no event.
 - **PHD2 really closes now:** the planner connected to PHD2's server as "localhost", which Windows tries over IPv6 first (PHD2 listens on IPv4 only) and that took the whole 2 s timeout, so PHD2 was taken as not running. It now connects over IPv4, as NINA does (found in the live rig log of 8–9 October).
+- **Close on disconnect only after a real connection:** NINA also raises "disconnected" when it connects a device (e.g. Connect All in 1 Begin); that no longer closes PHD2 or waits for the mount software.
 - **▶ marks the exposure row** being imaged.
 - **Pause is disabled while 4 End runs**, which always runs to the end.
 - **The last workflow shows in the Advanced Sequencer at startup.** It was loaded, but NINA's Sequencer tab stayed on its overview page.

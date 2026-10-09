@@ -48,6 +48,8 @@ namespace NINA.ObservatoryPlanner.Tests {
                     async () => { Calls.Add("nina disconnects guider"); GuiderConnected = false; await Closer.OnGuiderDisconnected(); },
                     Phd2, () => MountProgram, _ => Waited < MountExitsAfterSeconds,
                     (d, t) => { Waited += (int)d.TotalSeconds; return Task.CompletedTask; }, m => Calls.Add("info: " + m), Warnings.Add);
+                Closer.GuiderConnected();
+                Closer.MountConnected();
             }
         }
 
@@ -81,6 +83,22 @@ namespace NINA.ObservatoryPlanner.Tests {
             rig.Calls.Should().NotContain(c => c.StartsWith("phd2") || c == "nina disconnects guider");
             rig.Phd2.Running.Should().BeTrue();
             rig.Calls.Should().Contain("info: Mount disconnected: GS.Server.exe has closed", "the mount software is still handled");
+        }
+
+        [Test]
+        public async Task The_disconnect_NINA_does_while_connecting_is_ignored() {
+            // the live rig log, 1 Begin: Connect All raises "mount disconnected" before connecting; PHD2 must not be closed
+            var rig = new Rig();
+            var fresh = new DisconnectCloser(rig.Options, () => true, () => true, () => true, () => Task.CompletedTask, rig.Phd2,
+                () => rig.MountProgram, _ => false, (d, t) => Task.CompletedTask, m => rig.Calls.Add("info: " + m), rig.Warnings.Add);
+            await fresh.OnMountDisconnected();
+            await fresh.OnGuiderDisconnected();
+            rig.Calls.Should().BeEmpty();
+            rig.Phd2.Running.Should().BeTrue();
+
+            fresh.MountConnected();
+            await fresh.OnMountDisconnected();
+            rig.Calls.Should().Contain("phd2 release+close", "a disconnect after a real connection counts");
         }
 
         [Test]

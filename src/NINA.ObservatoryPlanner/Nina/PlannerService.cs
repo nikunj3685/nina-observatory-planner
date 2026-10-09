@@ -463,6 +463,10 @@ namespace NINA.ObservatoryPlanner.Nina {
                     () => AscomDriverProgram.ExeFor(Nina.Profile.ActiveProfile.TelescopeSettings.Id), AscomDriverProgram.IsRunning,
                     (d, t) => Task.Delay(d, t), m => Log.Info(m), m => { Log.Info(m); Logger.Warning("Observatory Planner: " + m); AddEndProblem(m); });
                 Closer = closer;
+                if (Nina.Guider.GetInfo()?.Connected == true) { closer.GuiderConnected(); }
+                if (Nina.Telescope.GetInfo()?.Connected == true) { closer.MountConnected(); }
+                Nina.Guider.Connected += (_, _) => { closer.GuiderConnected(); return Task.CompletedTask; };
+                Nina.Telescope.Connected += (_, _) => { closer.MountConnected(); return Task.CompletedTask; };
                 Nina.Guider.Disconnected += (_, _) => closer.OnGuiderDisconnected();
                 Nina.Telescope.Disconnected += (_, _) => closer.OnMountDisconnected();
             } catch (Exception ex) { Logger.Error(ex); }

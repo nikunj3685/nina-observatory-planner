@@ -190,10 +190,19 @@ namespace NINA.ObservatoryPlanner.Nina {
             this.warn = warn;
         }
 
+        // NINA also raises "disconnected" when it connects a device (it first disconnects the old, unconnected one):
+        // only a disconnect after a real connection counts
+        private volatile bool guiderWasConnected;
+        private volatile bool mountWasConnected;
+        public void GuiderConnected() => guiderWasConnected = true;
+        public void MountConnected() => mountWasConnected = true;
+
         /// <summary>How long the mount software may take to exit after the last program let go of it.</summary>
         public TimeSpan MountExitWait { get; set; } = TimeSpan.FromSeconds(30);
 
         public async Task OnGuiderDisconnected() {
+            if (!guiderWasConnected) { return; }
+            guiderWasConnected = false;
             if (!options.CloseGuiderAppOnDisconnect || !sequenceRunning()) { return; }
             // only when NINA's guider is PHD2: another program may use a PHD2 that is open next to NINA
             if (!guiderIsPhd2() || !await phd2.IsRunning(CancellationToken.None)) { return; }
@@ -213,6 +222,8 @@ namespace NINA.ObservatoryPlanner.Nina {
         }
 
         public async Task OnMountDisconnected() {
+            if (!mountWasConnected) { return; }
+            mountWasConnected = false;
             if (!options.CloseMountAppOnDisconnect || !sequenceRunning()) { return; }
             // PHD2 first: it guides through the mount's program and keeps it open
             if (guiderIsPhd2() && await phd2.IsRunning(CancellationToken.None)) {
