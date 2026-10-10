@@ -352,15 +352,16 @@
                             <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding EndProblems, StringFormat=⚠ {0}}" />
                         </DockPanel>
                     </Border>
-                    <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
-                        <Border Padding="10,2" VerticalAlignment="Center" BorderBrush="{Binding PillBrush}" BorderThickness="1" CornerRadius="11">
+                    <!--  the status text fills (and wraps in) the space left of the buttons  -->
+                    <DockPanel VerticalAlignment="Center">
+                        <Border Padding="10,2" VerticalAlignment="Center" BorderBrush="{Binding PillBrush}" BorderThickness="1" CornerRadius="11" DockPanel.Dock="Left">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center" Fill="{Binding PillBrush}" />
                                 <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="{Binding PillBrush}" Text="{Binding PillText}" />
                             </StackPanel>
                         </Border>
-                        <TextBlock MaxWidth="640" Margin="12,0,12,0" VerticalAlignment="Center" Text="{Binding StatusText}" TextWrapping="Wrap" />
-                    </StackPanel>
+                        <TextBlock Margin="12,0,12,0" VerticalAlignment="Center" Text="{Binding StatusText}" TextWrapping="Wrap" />
+                    </DockPanel>
                 </DockPanel>
             </Border>
 

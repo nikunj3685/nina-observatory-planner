@@ -480,7 +480,7 @@ namespace NINA.ObservatoryPlanner.Core {
         /// </summary>
         private async Task<CloseUpEnd> WaitClosedUp(CancellationToken token) {
             var deadline = clock.Now + TimeSpan.FromHours(options.CloseUpMaxHours);
-            string Waiting() => $"Closed up for the weather: waiting for safe. Power and camera cooling stay on; 4 End runs at {deadline:HH:mm} or at the end of the night if it is still unsafe";
+            string Waiting() => $"Closed up for the weather, waiting for safe (power and cooling on). 4 End at {deadline:HH:mm} or {DawnName(options.CloseUpEnd)} if still unsafe";
             log.Phase(PlannerPhase.ClosedUp, Waiting());
             while (true) {
                 if (stopRequested) {
@@ -505,6 +505,10 @@ namespace NINA.ObservatoryPlanner.Core {
                 await clock.Delay(SafetyPoll, token);
             }
         }
+
+        private static string DawnName(SunLimit limit) => limit switch {
+            SunLimit.AstronomicalDawn => "dawn", SunLimit.NauticalDawn => "nautical dawn", SunLimit.CivilDawn => "civil dawn", _ => "sunrise"
+        };
 
         /// <summary>After the night is over: stay off until the next night starts (local noon).</summary>
         private async Task WaitForNextNight(CancellationToken token) {
