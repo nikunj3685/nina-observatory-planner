@@ -53,7 +53,7 @@ NINA.
 
 ## Test results (2026-10-08/09)
 
-- **Unit tests:** 209, all passing.
+- **Unit tests:** 210, all passing.
 - **Simulator e2e:** 78/78 on 2026-10-08 (nosafety 4, safety 22, ui 11, negative 11,
   timing 7, single 5, pause 11, restart 7); safety 22/22 and pause 11/11 again on
   2026-10-09 after the mount recovery changed the engine loop.
@@ -82,7 +82,7 @@ Only the .NET 10 runtime is installed on this PC, so set roll-forward:
 
 ```bash
 export DOTNET_ROLL_FORWARD=LatestMajor
-dotnet test NINA.ObservatoryPlanner.slnx                     # 209 tests, all passing
+dotnet test NINA.ObservatoryPlanner.slnx                     # 210 tests, all passing
 dotnet build src/NINA.ObservatoryPlanner/NINA.ObservatoryPlanner.csproj -c Release
 ```
 
@@ -159,7 +159,7 @@ the simulated images have no stars.
 
 ## What changed this session (1.1.0.0, from `Feature-Improvement List.txt`)
 
-Done, unit-tested (209 passing) and installed, not committed or tested on the rig:
+Done, unit-tested (210 passing) and installed, not committed or tested on the rig:
 
 - **#1** Countdown during the wait after safe, and while waiting for the next target.
 - **#2** 4 End always runs when a step's error behaviour stops NINA's sequence. Failed
@@ -275,6 +275,10 @@ Done, unit-tested (209 passing) and installed, not committed or tested on the ri
   and a red note, and Close Dome is skipped unless `CloseRoofWhenRecoveryFails`. Only when the mount is GS Server
   (`ASCOM.GS.Sky.Telescope`). A loss counts as a crash when no Disconnect step for the mount is running. Also: a
   `GssAutoHomeInstruction`. Not yet tested with a real AutoHome (needs the CQ-350).
+- **$$FRAMENR$$ continues over nights** (user, 2026-10-11): before each light frame
+  `PlannerImagingRun.ContinueFrameNumber` sets the target block's NINA `ExposureInfo.Count` to
+  `ExposurePlanner.FramesTakenLike` (Done over light rows with the same filter, exposure time and
+  binning). Checked in the e2e pause run: Green 0002, 0003, 0004 over two resumes.
 - **Info tab** (the ! next to the ⚙ gear, `SelectedPlannerTab` 3): notes on
   editing during a run and on adding sections in the Advanced Sequencer.
 

@@ -224,6 +224,7 @@ namespace NINA.ObservatoryPlanner.Nina {
                         planner.Log.Info($"{target.Name}: pausing before the next frame");
                         break;
                     }
+                    ContinueFrameNumber(e, take);
                     planner.OnFrameStarting(target, e);
                     var (taken, dropped) = await TakeFrame(take, star, error, progress, token);
                     if (dropped == FrameDrop.StarLost) {
@@ -263,6 +264,19 @@ namespace NINA.ObservatoryPlanner.Nina {
                     try { t.SequenceBlockFinished(); t.SequenceBlockTeardown(); } catch (Exception ex) { Logger.Error(ex); }
                 }
             }
+        }
+
+        /// <summary>
+        /// NINA numbers frames ($$FRAMENR$$) per target block and per filter / exposure time / binning. The planner builds a new
+        /// target block every time a target starts (each night, after a pause or the weather), which would start the numbers
+        /// again; start from the frames already taken with that row instead, so the numbers continue over the nights.
+        /// </summary>
+        private void ContinueFrameNumber(PlannerExposure e, TakeExposure take) {
+            if (e.Type != ExposureType.Light || Parent is not DeepSkyObjectContainer dso) { return; }
+            try {
+                var info = dso.GetOrCreateExposureCountForItemAndCurrentFilter(take, 1);
+                if (info != null) { info.Count = ExposurePlanner.FramesTakenLike(target, e); }
+            } catch (Exception ex) { Logger.Error(ex); }
         }
 
         /// <summary>

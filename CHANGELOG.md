@@ -31,6 +31,7 @@ Fixes and improvements from the first test nights.
 - **GS Server AutoHome** instruction (Observatory Planner category), e.g. at the start of 1 Begin.
 - **Button text is readable again:** NINA's theme made all text light, so "Run forever" was light on orange and "Stop" was white instead of red. The planner's buttons now keep their own text colour.
 - **Status text** wraps beside the Pause / Stop buttons instead of running under them; the close-up message is shorter and names the chosen dawn.
+- **Frame numbers in file names continue over the nights:** NINA counts $$FRAMENR$$ per target block, and the planner builds a new one each time a target starts (each night, after a pause or the weather), so the numbers started at 0000 again. Each light frame now continues from the frames already taken with that filter, exposure time and binning.
 - **▶ marks the exposure row** being imaged.
 - **Pause is disabled while 4 End runs**, which always runs to the end.
 - **The last workflow shows in the Advanced Sequencer at startup.** It was loaded, but NINA's Sequencer tab stayed on its overview page.

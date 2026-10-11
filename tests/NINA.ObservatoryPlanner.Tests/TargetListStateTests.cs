@@ -44,6 +44,22 @@ namespace NINA.ObservatoryPlanner.Tests {
         }
 
         [Test]
+        public void Frame_numbers_continue_from_the_frames_taken_with_the_same_filter_time_and_binning() {
+            // night 1 took 12 Ha 300 s frames; night 2 must continue NINA's $$FRAMENR$$ at 12, not 0
+            var t = TestData.Circumpolar("M31", frames: 50, exposure: 300);
+            var ha = t.Exposures[0];
+            ha.Done = 12;
+            var ha2 = new PlannerExposure { Filter = "ha", ExposureTime = 300, Count = 10, Done = 3 };
+            var oiii = new PlannerExposure { Filter = "OIII", ExposureTime = 300, Count = 10, Done = 7 };
+            var ha60 = new PlannerExposure { Filter = "Ha", ExposureTime = 60, Count = 10, Done = 5 };
+            var dark = new PlannerExposure { Filter = "Ha", ExposureTime = 300, Count = 10, Done = 4, Type = ExposureType.Dark };
+            foreach (var e in new[] { ha2, oiii, ha60, dark }) { t.Exposures.Add(e); }
+            ExposurePlanner.FramesTakenLike(t, ha).Should().Be(15, "both Ha 300 s rows count together, as NINA counts them");
+            ExposurePlanner.FramesTakenLike(t, oiii).Should().Be(7);
+            ExposurePlanner.FramesTakenLike(t, ha60).Should().Be(5);
+        }
+
+        [Test]
         public void Complete_wins_over_everything() {
             var t = TestData.Circumpolar("M31", frames: 2);
             t.Exposures[0].Done = 2;

@@ -91,6 +91,14 @@ namespace NINA.ObservatoryPlanner.Core {
         /// The next exposure row to shoot. Finish each row first: the first row with frames left.
         /// Rotate through filters: the next row with frames left after the one shot last.
         /// </summary>
+        /// <summary>
+        /// Light frames already taken with this row's filter, exposure time and binning, over all rows of the target that share
+        /// them (NINA counts frames per such combination).
+        /// </summary>
+        public static int FramesTakenLike(PlannerTarget t, PlannerExposure e) =>
+            t.Exposures.Where(x => x.Type == ExposureType.Light && string.Equals(x.Filter, e.Filter, StringComparison.OrdinalIgnoreCase)
+                                   && x.ExposureTime == e.ExposureTime && x.Binning == e.Binning).Sum(x => x.Done);
+
         public static PlannerExposure Next(PlannerTarget t, PlannerExposure last) {
             var rows = t.Exposures.Where(e => e.Enabled && e.ExposureTime >= 0).ToList();
             if (t.Order == ExposureOrder.FinishEachRowFirst || last == null) {
