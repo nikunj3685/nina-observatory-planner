@@ -168,6 +168,7 @@ namespace NINA.ObservatoryPlanner.Nina {
             PlannerExposure last = null;
             ISequenceItem previous = null;
             var failures = 0;
+            var panelLit = false;
             foreach (var t in Triggers.ToList()) { t.SequenceBlockInitialize(); t.SequenceBlockStarted(); }
             RememberLastFilter();
             planner.ImagingTargetId = target.Id; // 2 Start of target ran to its end
@@ -183,7 +184,22 @@ namespace NINA.ObservatoryPlanner.Nina {
                         break;
                     }
 
-                    var sw = planner.Factory.SwitchFilter(e.Filter);
+                    // NINA's Manual Filter Wheel would wait for a click on its message box (also while it turns unsafe): pause instead
+                    if (planner.ManualFilterChangeNeeded(e)) {
+                        planner.Log.Info($"{target.Name}: the filter must be changed by hand to {e.Filter}; pausing (NINA's Manual Filter Wheel)");
+                        planner.PauseForManualFilter(e.Filter);
+                        if (!planner.FrameAllowed) { break; }
+                    }
+
+                    // the flat panel for this frame: cover open and light off for the sky, closed and lit for flats, closed and dark for darks
+                    try {
+                        panelLit = await FlatPanel.Prepare(planner.Nina?.FlatDevice, FlatPanel.For(e.Type), planner.Log, token);
+                    } catch (Exception ex) when (ex is not OperationCanceledException) {
+                        Logger.Error(ex);
+                        planner.Log.Info($"{target.Name}: the flat panel could not be set for the next frame ({ex.Message}); the frame is taken anyway");
+                    }
+
+                    var sw = planner.HasFilterWheel ? planner.Factory.SwitchFilter(e.Filter) : null;
                     var take = planner.Factory.TakeExposure(e);
                     await Ui.Run(() => {
                         foreach (var old in Items.ToList()) { Remove(old); }
@@ -195,6 +211,7 @@ namespace NINA.ObservatoryPlanner.Nina {
                         await RunTriggers(previous, sw, progress, token);
                         if (!await RunItem(sw, progress, token)) { failures++; }
                         previous = sw;
+                        planner.ManualFilterConfirmed = null;
                     }
 
                     // autofocus on the frame's filter: the panel's Autofocus button, or the first light frame after 1 Begin
@@ -259,6 +276,10 @@ namespace NINA.ObservatoryPlanner.Nina {
                     }
                 }
             } finally {
+                // flats were the last frames: the panel light is not left on
+                if (panelLit) {
+                    try { await FlatPanel.Prepare(planner.Nina?.FlatDevice, PanelUse.Dark, planner.Log, CancellationToken.None); } catch (Exception ex) { Logger.Error(ex); }
+                }
                 planner.OnImagingEnded(target);
                 foreach (var t in Triggers.ToList()) {
                     try { t.SequenceBlockFinished(); t.SequenceBlockTeardown(); } catch (Exception ex) { Logger.Error(ex); }
@@ -275,7 +296,7 @@ namespace NINA.ObservatoryPlanner.Nina {
             if (e.Type != ExposureType.Light || Parent is not DeepSkyObjectContainer dso) { return; }
             try {
                 var info = dso.GetOrCreateExposureCountForItemAndCurrentFilter(take, 1);
-                if (info != null) { info.Count = ExposurePlanner.FramesTakenLike(target, e); }
+                if (info != null) { info.Count = ExposurePlanner.FramesTakenLike(target, e, anyFilter: !planner.HasFilterWheel); }
             } catch (Exception ex) { Logger.Error(ex); }
         }
 

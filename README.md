@@ -27,6 +27,8 @@ The four stages of the night are ordinary Advanced Sequencer instruction sets yo
 - 4 End always runs when a step stops NINA's sequence; failed 4 End steps are shown; PHD2 and the mount software (e.g. GS Server) close on disconnect
 - GS Server: automatic mount recovery after a crash (reconnect, AutoHome with the home sensors, continue) and a GS Server AutoHome instruction
 - Countdowns, wait after safe, gap handling between targets, manual autofocus before the next frame, closable warnings, Info (!) page about editing during a run
+- The panel fits any dock: buttons turn into menus, exposure rows wrap and the target list moves above the details when it is narrow; collapsible sections; a text size option; an Info (!) guide from scratch
+- Colour cameras (no filter wheel) and NINA's Manual Filter Wheel (the run pauses for a filter change instead of blocking); a camera rotator also without plate solving; a flat panel's cover and light are set for light, flat and dark frames
 - Per-profile target lists, workflows and options; the last workflow is reopened at startup and shown in the Advanced Sequencer; optional auto-start when NINA starts
 
 ## Requirements

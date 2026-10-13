@@ -240,6 +240,8 @@ namespace NINA.ObservatoryPlanner.Nina {
             yield return ("Filter Wheel", Set(p.FilterWheelSettings.Id), () => planner.Nina.FilterWheel.GetInfo()?.Connected == true);
             yield return ("Focuser", Set(p.FocuserSettings.Id), () => planner.Nina.Focuser.GetInfo()?.Connected == true);
             yield return ("Guider", Set(p.GuiderSettings.GuiderName) && p.GuiderSettings.GuiderName != "No_Guider", () => planner.Nina.Guider.GetInfo()?.Connected == true);
+            yield return ("Rotator", Set(p.RotatorSettings.Id), () => planner.Nina.Rotator.GetInfo()?.Connected == true);
+            yield return ("Flat Panel", Set(p.FlatDeviceSettings.Id), () => planner.Nina.FlatDevice.GetInfo()?.Connected == true);
         }
 
         public async Task<IReadOnlyList<string>> CheckConnections(CancellationToken token) {
@@ -266,12 +268,33 @@ namespace NINA.ObservatoryPlanner.Nina {
             if (planner.Nina.Guider.GetInfo()?.Connected == true) { await RunStandalone(F.StopGuiding(), token); }
         }
 
-        /// <summary>The instruction that moves to the target, from the target's "When target starts" setting.</summary>
-        private ISequenceItem MoveItem(PlannerTarget t) => t.OnStart switch {
-            OnStartAction.SlewAndCenter => t.Rotate ? F.CenterAndRotate(t.PositionAngle) : F.Center(),
-            OnStartAction.SlewOnly => F.SlewToTarget(),
-            _ => null
-        };
+        private bool RotatorConnected() {
+            try { return planner.Nina.Rotator.GetInfo()?.Connected == true; } catch (Exception) { return false; }
+        }
+
+        /// <summary>
+        /// The instructions that move to the target, from its "When target starts" setting, and turn the camera to its angle
+        /// (before guiding starts, as the stage's move step): Center and Rotate when centering with a rotator, otherwise
+        /// the planner's own rotate step. Without a rotator the rotation is left out (and logged).
+        /// </summary>
+        private System.Collections.Generic.List<ISequenceItem> MoveItems(PlannerTarget t) {
+            var items = new System.Collections.Generic.List<ISequenceItem>();
+            var rotate = t.Rotate && RotatorConnected();
+            if (t.Rotate && !rotate) { planner.Log.Info($"{t.Name}: rotation to {t.PositionAngle:0.#}° skipped: no rotator is connected"); }
+            switch (t.OnStart) {
+                case OnStartAction.SlewAndCenter:
+                    items.Add(rotate ? F.CenterAndRotate(t.PositionAngle) : F.Center());
+                    break;
+                case OnStartAction.SlewOnly:
+                    items.Add(F.SlewToTarget());
+                    if (rotate) { items.Add(new PlannerRotate(planner.Nina.Rotator, planner.Log, t.PositionAngle)); }
+                    break;
+                default:
+                    if (rotate) { items.Add(new PlannerRotate(planner.Nina.Rotator, planner.Log, t.PositionAngle)); }
+                    break;
+            }
+            return items;
+        }
 
         private static bool IsMove(ISequenceItem i) => i is Center || i is SlewScopeToRaDec; // CenterAndRotate derives from Center
 
@@ -281,12 +304,13 @@ namespace NINA.ObservatoryPlanner.Nina {
 
             // 2 Start of target, adapted to this target: its "When target starts" choice replaces the stage's move step.
             var stageItems = container.Stage(StageKind.TargetStart)?.Items.ToList() ?? new List<ISequenceItem>();
+            // a flat panel cover closed by 4 End (or flats) is opened first: slewing, plate solving and light frames need the sky
+            dso.Add(new PlannerOpenPanel(planner.Nina.FlatDevice, planner.Log));
             var moved = false;
             foreach (var item in stageItems) {
                 if (IsMove(item)) {
                     if (!moved) {
-                        var move = MoveItem(target);
-                        if (move != null) { move.Attempts = item.Attempts; move.ErrorBehavior = item.ErrorBehavior; dso.Add(move); }
+                        foreach (var move in MoveItems(target)) { move.Attempts = item.Attempts; move.ErrorBehavior = item.ErrorBehavior; dso.Add(move); }
                         moved = true;
                     }
                     continue;
@@ -294,8 +318,8 @@ namespace NINA.ObservatoryPlanner.Nina {
                 dso.Add((ISequenceItem)item.Clone());
             }
             if (!moved) {
-                var move = MoveItem(target);
-                if (move != null) { dso.InsertIntoSequenceBlocks(0, move); }
+                var moves = MoveItems(target);
+                for (var i = 0; i < moves.Count; i++) { dso.InsertIntoSequenceBlocks(1 + i, moves[i]); }
             }
             return await RunImaging(dso, target, canStartFrame, token);
         }
@@ -304,6 +328,7 @@ namespace NINA.ObservatoryPlanner.Nina {
         public async Task<int> ResumeTarget(PlannerTarget target, Func<PlannerExposure, bool> canStartFrame, CancellationToken token) {
             planner.ImagingTargetId = null;
             var dso = F.TargetContainer(target);
+            dso.Add(new PlannerOpenPanel(planner.Nina.FlatDevice, planner.Log));
             dso.Add(F.SetTracking(TrackingMode.Sidereal));
             if (planner.Nina.Guider.GetInfo()?.Connected == true) { dso.Add(F.StartGuiding(forceCalibration: false)); }
             return await RunImaging(dso, target, canStartFrame, token);

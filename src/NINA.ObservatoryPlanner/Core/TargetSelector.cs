@@ -95,8 +95,12 @@ namespace NINA.ObservatoryPlanner.Core {
         /// Light frames already taken with this row's filter, exposure time and binning, over all rows of the target that share
         /// them (NINA counts frames per such combination).
         /// </summary>
-        public static int FramesTakenLike(PlannerTarget t, PlannerExposure e) =>
-            t.Exposures.Where(x => x.Type == ExposureType.Light && string.Equals(x.Filter, e.Filter, StringComparison.OrdinalIgnoreCase)
+        /// <summary>
+        /// Light frames of this target taken like <paramref name="e"/> (filter, exposure, binning): NINA's $$FRAMENR$$ continues
+        /// from it. <paramref name="anyFilter"/>: no filter wheel (a colour camera), so every row has the same filter whatever it says.
+        /// </summary>
+        public static int FramesTakenLike(PlannerTarget t, PlannerExposure e, bool anyFilter = false) =>
+            t.Exposures.Where(x => x.Type == ExposureType.Light && (anyFilter || string.Equals(x.Filter, e.Filter, StringComparison.OrdinalIgnoreCase))
                                    && x.ExposureTime == e.ExposureTime && x.Binning == e.Binning).Sum(x => x.Done);
 
         public static PlannerExposure Next(PlannerTarget t, PlannerExposure last) {

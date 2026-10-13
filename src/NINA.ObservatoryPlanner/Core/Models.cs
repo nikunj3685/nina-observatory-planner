@@ -219,6 +219,7 @@ namespace NINA.ObservatoryPlanner.Core {
         private bool closeMountAppOnDisconnect = true;
         private UnsafeAction unsafeAction = UnsafeAction.RunEnd;
         private double closeUpMaxHours = 2;
+        private double panelTextSize = 10;
 
         [JsonProperty] public RunMode RunMode { get => runMode; set => Set(ref runMode, value); }
         /// <summary>Devices connected at Run and never disconnected by the planner (NINA device names).</summary>
@@ -269,7 +270,9 @@ namespace NINA.ObservatoryPlanner.Core {
         [JsonProperty] public UnsafeAction UnsafeAction { get => unsafeAction; set => Set(ref unsafeAction, value); }
         /// <summary>Closed up for the weather: 4 End runs when it is still unsafe after this many hours, or when the night ends, whichever comes first.</summary>
         [JsonProperty] public double CloseUpMaxHours { get => closeUpMaxHours; set => Set(ref closeUpMaxHours, Math.Max(0.25, value)); }
-        /// <summary>Name of the workflow last loaded or saved from the Equipment &amp; Safety tab.</summary>
+        /// <summary>Text size of the Observatory Planner panel (10 to 18; NINA's own text is 12). The whole panel scales with it.</summary>
+        [JsonProperty] public double PanelTextSize { get => panelTextSize; set => Set(ref panelTextSize, Math.Round(Math.Max(10, Math.Min(18, value)) * 2) / 2); }
+        /// <summary>Name of the workflow last loaded or saved from the Sequence tab.</summary>
         [JsonProperty] public string WorkflowName { get => workflowName; set => Set(ref workflowName, value); }
         /// <summary>Takes every setting from <paramref name="o"/> (switching NINA profile keeps this same object).</summary>
         public void CopyFrom(PlannerOptions o) {
@@ -281,7 +284,7 @@ namespace NINA.ObservatoryPlanner.Core {
             GuideLostWatch = o.GuideLostWatch; GuideLostWaitSeconds = o.GuideLostWaitSeconds; GuideLostAction = o.GuideLostAction;
             GuidingCheck = o.GuidingCheck; GuidingLimitPixels = o.GuidingLimitPixels; GuidingCheckWaitSeconds = o.GuidingCheckWaitSeconds;
             CloseGuiderAppOnDisconnect = o.CloseGuiderAppOnDisconnect; CloseMountAppOnDisconnect = o.CloseMountAppOnDisconnect;
-            UnsafeAction = o.UnsafeAction; CloseUpMaxHours = o.CloseUpMaxHours; WorkflowName = o.WorkflowName;
+            UnsafeAction = o.UnsafeAction; CloseUpMaxHours = o.CloseUpMaxHours; WorkflowName = o.WorkflowName; PanelTextSize = o.PanelTextSize;
             KeepConnected.Clear();
             foreach (var d in o.KeepConnected) { KeepConnected.Add(d); }
         }

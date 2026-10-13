@@ -343,6 +343,7 @@ namespace NINA.ObservatoryPlanner.Nina {
             if (start == StartKind.Normal && IsPaused) { start = StartKind.Resume; }
             pauseWatch?.Cancel();
             PauseNote = null;
+            pendingPauseNote = null;
             IsRunning = true;
             Log.StartRun(Options);
             var hardware = new NinaPlannerHardware(container, this, progress);
@@ -355,7 +356,8 @@ namespace NINA.ObservatoryPlanner.Nina {
                 var outcome = await e.RunAsync(token, start, PausePoint);
                 if (outcome == RunOutcome.Paused) {
                     PausePoint = e.Paused;
-                    PauseNote = e.PausedReason;
+                    PauseNote = e.PausedReason ?? pendingPauseNote;
+                    pendingPauseNote = null;
                     IsPaused = true;
                     SavePauseState();
                     StartPauseWatch();
@@ -615,8 +617,8 @@ namespace NINA.ObservatoryPlanner.Nina {
             && !string.Equals(f.Filter, LastLightFilter, StringComparison.OrdinalIgnoreCase);
 
         public void OnFrameStarting(PlannerTarget target, PlannerExposure e) {
-            StatusText = $"Imaging {target.Name} · {e.Filter} {e.ExposureTime:0.#} s · frame {e.Done + 1} of {e.Count}";
-            Log.Info($"Frame starting: {target.Name} {e.Filter} {e.ExposureTime:0.#} s{(e.Type == ExposureType.Light ? "" : " " + e.Type)}");
+            StatusText = $"Imaging {target.Name} · {FilterLabel(e)}{e.ExposureTime:0.#} s · frame {e.Done + 1} of {e.Count}";
+            Log.Info($"Frame starting: {target.Name} {FilterLabel(e)}{e.ExposureTime:0.#} s{(e.Type == ExposureType.Light ? "" : " " + e.Type)}");
             IsTakingFrames = true;
             if (e.Type == ExposureType.Light) { LastLightFilter = e.Filter; }
             foreach (var x in target.Exposures) { x.IsActive = ReferenceEquals(x, e); }
@@ -670,6 +672,54 @@ namespace NINA.ObservatoryPlanner.Nina {
         public IReadOnlyList<string> FilterNames() =>
             Nina?.Profile?.ActiveProfile?.FilterWheelSettings?.FilterWheelFilters?.Select(f => f.Name).ToList() ?? new List<string>();
 
-        private string DefaultFilter() => FilterNames().FirstOrDefault() ?? "L";
+        /// <summary>New rows: the profile's first filter; no filter without a filter wheel (a colour camera).</summary>
+        private string DefaultFilter() => HasFilterWheel ? FilterNames().FirstOrDefault() ?? "L" : "";
+
+        private string FilterWheelId => Nina?.Profile?.ActiveProfile?.FilterWheelSettings?.Id;
+
+        /// <summary>
+        /// The NINA profile has a filter wheel. Without one (a colour camera) rows have no filter and none is changed.
+        /// Without NINA (tests) a filter wheel is assumed.
+        /// </summary>
+        public bool HasFilterWheel => Nina?.Profile?.ActiveProfile == null || (!string.IsNullOrWhiteSpace(FilterWheelId) && FilterWheelId != "No_Device");
+
+        /// <summary>The filter wheel is NINA's Manual Filter Wheel: each change shows a message box that waits for someone to click OK.</summary>
+        public bool ManualFilterWheel => FilterWheelId == ManualFilterWheelId;
+
+        public const string ManualFilterWheelId = "Manual Filter Wheel";
+
+        /// <summary>The filter the run paused for with a manual filter wheel: after Start sequence the change to it goes ahead.</summary>
+        internal string ManualFilterConfirmed { get; set; }
+
+        private string pendingPauseNote;
+
+        /// <summary>
+        /// A manual filter wheel must change to another filter for the next frame: NINA would wait for a click on its message
+        /// box, also while it turns unsafe. The run pauses instead, so the weather is still handled; after Start sequence (someone
+        /// is there) the change goes ahead.
+        /// </summary>
+        public static bool ManualChangeNeeded(bool manualWheel, string wanted, string current, string confirmed, IEnumerable<string> profileFilters) =>
+            manualWheel
+            && !string.IsNullOrWhiteSpace(wanted)
+            && profileFilters.Any(f => string.Equals(f, wanted, StringComparison.OrdinalIgnoreCase))
+            && !string.Equals(wanted, current, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(wanted, confirmed, StringComparison.OrdinalIgnoreCase);
+
+        internal bool ManualFilterChangeNeeded(PlannerExposure e) {
+            if (!ManualFilterWheel) { return false; }
+            string current = null;
+            try { current = Nina.FilterWheel.GetInfo()?.SelectedFilter?.Name; } catch (Exception ex) { Logger.Error(ex); }
+            return ManualChangeNeeded(true, e.Filter, current, ManualFilterConfirmed, FilterNames());
+        }
+
+        /// <summary>Pauses before the next frame so the filter can be changed by hand.</summary>
+        internal void PauseForManualFilter(string filter) {
+            ManualFilterConfirmed = filter;
+            pendingPauseNote = $"Change the filter to {filter} by hand, then press Start sequence (the filter wheel is NINA's Manual Filter Wheel).";
+            RequestPause(PauseKind.AfterFrame);
+        }
+
+        /// <summary>"Ha " for the status text, nothing without a filter wheel or a filter.</summary>
+        private string FilterLabel(PlannerExposure e) => HasFilterWheel && !string.IsNullOrWhiteSpace(e.Filter) ? e.Filter + " " : "";
     }
 }

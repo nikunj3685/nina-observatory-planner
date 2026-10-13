@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -17,12 +18,27 @@ namespace NINA.ObservatoryPlanner.Core {
             "TakeSubframeExposure", "SwitchFilter", "RunAutofocus", "MoveFocuserAbsolute", "MoveFocuserRelative", "MoveFocuserByTemperature",
             "MoveRotatorMechanical", "SolveAndRotate", "UnparkScope", "ParkScope", "FindHome", "SetTracking", "SlewScopeToAltAz", "SlewScopeToRaDec",
             "Center", "CenterAndRotate", "SolveAndSync", "StartGuiding", "StopGuiding", "Dither", "TrainedFlatExposure", "TrainedDarkFlatExposure",
-            "AutoExposureFlat", "AutoBrightnessFlat", "SkyFlat"
+            "AutoExposureFlat", "AutoBrightnessFlat", "SkyFlat", "OpenCover", "CloseCover", "ToggleLight", "SetBrightness"
         };
     }
 
     /// <summary>Order checks for the four stages. Plain-language warnings, never a block.</summary>
     public static class StageChecks {
+
+        /// <summary>
+        /// With NINA's Manual Filter Wheel each filter change needs someone to change the filter: the run pauses there. Warns
+        /// when the ticked targets use more than one filter.
+        /// </summary>
+        public static string ManualFilterWheel(IEnumerable<PlannerTarget> targets, bool manualWheel) {
+            if (!manualWheel) { return null; }
+            var filters = targets.Where(t => t.Enabled && !t.IsComplete)
+                .SelectMany(t => t.Exposures.Where(e => e.Enabled && e.Remaining > 0).Select(e => e.Filter?.Trim()))
+                .Where(f => !string.IsNullOrEmpty(f)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (filters.Count < 2) { return null; }
+            return $"The filter wheel is NINA's Manual Filter Wheel, and the ticked targets use {filters.Count} filters ({string.Join(", ", filters)}). "
+                + "At every filter change the run pauses until someone changes the filter and presses Start sequence, so unattended it stops there. "
+                + "Use one filter per night, or a motorised filter wheel.";
+        }
         private static string Label(string device) => device == "Switch" ? "Switch hub" : device;
 
         public static IReadOnlyList<string> Check(StageKind stage, IReadOnlyList<StageEntry> items, PlannerOptions options) {
@@ -95,9 +111,12 @@ namespace NINA.ObservatoryPlanner.Core {
             "MoveFocuserAbsolute" or "MoveFocuserRelative" or "MoveFocuserByTemperature" => new[] { "Focuser" },
             "RunAutofocus" => new[] { "Camera", "Focuser" },
             "MoveRotatorMechanical" => new[] { "Rotator" },
+            "OpenCover" or "CloseCover" or "ToggleLight" or "SetBrightness" => new[] { "Flat Panel" },
+            "TrainedFlatExposure" or "TrainedDarkFlatExposure" or "AutoExposureFlat" or "AutoBrightnessFlat" => new[] { "Camera", "Flat Panel" },
             "SolveAndRotate" => new[] { "Camera", "Rotator" },
             "UnparkScope" or "ParkScope" or "FindHome" or "SetTracking" or "SlewScopeToAltAz" or "SlewScopeToRaDec" => new[] { "Mount" },
-            "Center" or "CenterAndRotate" or "SolveAndSync" => new[] { "Camera", "Mount" },
+            "Center" or "SolveAndSync" => new[] { "Camera", "Mount" },
+            "CenterAndRotate" => new[] { "Camera", "Mount", "Rotator" },
             "StartGuiding" or "StopGuiding" or "Dither" => new[] { "Guider" },
             _ => new[] { "Camera" } // cooling, exposures and flats
         };

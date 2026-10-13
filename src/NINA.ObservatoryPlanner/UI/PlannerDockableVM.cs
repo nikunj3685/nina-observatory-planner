@@ -35,7 +35,9 @@ namespace NINA.ObservatoryPlanner.UI {
         public string Title { get => title; set => Set(ref title, value); }
         public string Hint { get => hint; set => Set(ref hint, value); }
         public string EmptyText { get => emptyText; set => Set(ref emptyText, value); }
-        public IReadOnlyList<StageLine> Lines { get => lines; set { if (!lines.SequenceEqual(value)) { lines = value; Raise(); } } }
+        public IReadOnlyList<StageLine> Lines { get => lines; set { if (!lines.SequenceEqual(value)) { lines = value; Raise(); Raise(nameof(CountText)); } } }
+        /// <summary>Shown in the heading, also while the stage is collapsed: "8 steps" or "2 triggers".</summary>
+        public string CountText => Number == 3 ? $"{lines.Count} trigger{(lines.Count == 1 ? "" : "s")}" : $"{lines.Count} step{(lines.Count == 1 ? "" : "s")}";
         public IReadOnlyList<string> Warnings { get => warnings; set { if (!warnings.SequenceEqual(value)) { warnings = value; Raise(); } } }
     }
 
@@ -124,12 +126,14 @@ namespace NINA.ObservatoryPlanner.UI {
             GoInfoCommand = new Command(() => SelectedPlannerTab = 3);
             ApplyDefaultsToAllCommand = new Command(ApplyDefaultsToAll);
             ResetConfirmationsCommand = new Command(() => { Options.ConfirmDeleteTarget = true; Options.ConfirmDeleteExposure = true; });
+            ResetTextSizeCommand = new Command(() => Options.PanelTextSize = 10);
             DismissEndProblemsCommand = new Command(() => planner.SetEndProblems(null));
             DismissWarningCommand = new Command(p => {
                 if (p is not string text || !dismissed.Add(text)) { return; }
                 RaisePropertyChanged(nameof(NoSafetyWarningShown));
                 UpdateRotateWarning();
                 RefreshStages();
+                RaisePropertyChanged(nameof(TabHasWarnings));
             });
 
             planner.PropertyChanged += (_, e) => Ui.Run(() => ServiceChanged(e.PropertyName));
@@ -159,6 +163,8 @@ namespace NINA.ObservatoryPlanner.UI {
                 RefreshSafety();
                 RaisePropertyChanged(nameof(GuidingLimitArcsec));
                 RaisePropertyChanged(nameof(MountIsGss));
+                RaisePropertyChanged(nameof(HasFilterWheel));
+                RaisePropertyChanged(nameof(FilterColumnChars));
                 // save the workflow whenever it changes, so a NINA restart brings back the exact stages
                 if (!planner.IsRunning) {
                     try { if (workflows.AutoSave()) { RaiseWorkflow(); } } catch (Exception ex) { Logger.Error(ex); }
@@ -171,8 +177,27 @@ namespace NINA.ObservatoryPlanner.UI {
         }
 
         private int selectedPlannerTab;
-        /// <summary>0 Targets, 1 Equipment &amp; Safety, 2 Options (opened with the gear), 3 Info (opened with the !).</summary>
-        public int SelectedPlannerTab { get => selectedPlannerTab; set { selectedPlannerTab = value; RaisePropertyChanged(); if (value == 1) { RefreshStages(); } } }
+        /// <summary>0 Targets, 1 Sequence, 2 Options (opened with the gear), 3 Info (opened with the !).</summary>
+        public int SelectedPlannerTab {
+            get => selectedPlannerTab;
+            set {
+                selectedPlannerTab = value;
+                RaisePropertyChanged();
+                if (value == 1) { RefreshStages(); }
+                RaisePropertyChanged(nameof(TabHasWarnings));
+            }
+        }
+
+        /// <summary>The tab shown has a warning (not closed): a red ⚠ in front of the status text jumps to it.</summary>
+        public bool TabHasWarnings => SelectedPlannerTab switch {
+            0 => !string.IsNullOrEmpty(RotateAfWarning) || !string.IsNullOrEmpty(ManualFilterWarning),
+            1 => Stages.Any(s => s.Warnings.Count > 0),
+            3 => NoSafetyWarningShown,
+            _ => false
+        };
+
+        /// <summary>The whole panel is scaled for the text size; NINA's own text is 12.</summary>
+        public double PanelScale => Options.PanelTextSize / 12.0;
 
         public PlannerOptions Options => planner.Options;
         public ObservableCollection<PlannerTarget> Targets => planner.Targets;
@@ -239,6 +264,9 @@ namespace NINA.ObservatoryPlanner.UI {
         public bool StepImaging => Step(PlannerPhase.Imaging) && planner.IsTakingFrames;
         public bool StepEnd => Step(PlannerPhase.End);
 
+        /// <summary>The stage running now, shown next to the state when the stage line does not fit; empty when nothing runs.</summary>
+        public string CurrentStageText => StepWait ? "Waiting for safe" : StepBegin ? "1 Begin" : StepTarget ? "2 Start of target" : StepImaging ? "Imaging + 3 triggers" : StepEnd ? "4 End" : "";
+
         private void ServiceChanged(string property) {
             switch (property) {
                 case nameof(PlannerService.IsRunning):
@@ -266,6 +294,7 @@ namespace NINA.ObservatoryPlanner.UI {
                     break;
                 case nameof(PlannerService.AutofocusPending):
                     RaisePropertyChanged(nameof(AutofocusText));
+                    RaisePropertyChanged(nameof(AutofocusWord));
                     break;
                 case nameof(PlannerService.EndProblems):
                     RaisePropertyChanged(nameof(EndProblems));
@@ -275,6 +304,8 @@ namespace NINA.ObservatoryPlanner.UI {
                 case nameof(PlannerService.ListDirty):
                     RaisePropertyChanged(nameof(ListName));
                     RaisePropertyChanged(nameof(ListSavedText));
+                    RaisePropertyChanged(nameof(ListSavedIcon));
+                    RaisePropertyChanged(nameof(ListSavedBrush));
                     break;
             }
         }
@@ -283,7 +314,7 @@ namespace NINA.ObservatoryPlanner.UI {
             foreach (var p in new[] { nameof(IsRunning), nameof(RunButtonText), nameof(RunButtonTip), nameof(StopShown), nameof(IsPaused), nameof(PauseShown), nameof(PausingShown),
                 nameof(PauseEnabled), nameof(PauseTip),
                 nameof(StatusText), nameof(PillText), nameof(PillBrush),
-                nameof(StepWait), nameof(StepBegin), nameof(StepTarget), nameof(StepImaging), nameof(StepEnd) }) {
+                nameof(StepWait), nameof(StepBegin), nameof(StepTarget), nameof(StepImaging), nameof(StepEnd), nameof(CurrentStageText) }) {
                 RaisePropertyChanged(p);
             }
         }
@@ -303,9 +334,22 @@ namespace NINA.ObservatoryPlanner.UI {
 
         // ---------- targets ----------
         public string ListName => planner.ListName;
-        public string ListSavedText => planner.ListPath == null ? "Not saved yet" : planner.ListDirty ? "● Saving…" : "✔ Saved automatically";
+        /// <summary>Tooltip of the saved mark next to the list name.</summary>
+        public string ListSavedText => planner.ListPath == null ? "Not saved yet" : planner.ListDirty ? "Saving…" : "Saved automatically";
+        public string ListSavedIcon => planner.ListPath != null && !planner.ListDirty ? "✔" : "●";
+        public Brush ListSavedBrush => planner.ListPath == null ? PlannerBrushes.Muted : planner.ListDirty ? PlannerBrushes.Accent : PlannerBrushes.Safe;
+
+        /// <summary>
+        /// Characters the Filter column fits: the longest filter name (of the filter wheel and of this target's rows, at most 12)
+        /// plus one.
+        /// </summary>
+        public int FilterColumnChars => !HasFilterWheel ? 2 : FilterChoices.Concat(SelectedTarget?.Exposures.Select(e => e.Filter ?? "") ?? Enumerable.Empty<string>())
+            .Select(f => Math.Min(12, f.Length)).DefaultIfEmpty(1).Max() + 1;
 
         public IReadOnlyList<string> FilterChoices => planner.FilterNames().DefaultIfEmpty("L").ToList();
+
+        /// <summary>The NINA profile has a filter wheel; without one (a colour camera) the Filter column shows "—".</summary>
+        public bool HasFilterWheel => planner.HasFilterWheel;
         public IReadOnlyList<string> BinningChoices { get; }
         public IReadOnlyList<Choice> ExposureTypeChoices { get; }
         /// <summary>The twilight limits, named as NINA names its times.</summary>
@@ -321,6 +365,7 @@ namespace NINA.ObservatoryPlanner.UI {
                 RaisePropertyChanged();
                 RaisePropertyChanged(nameof(HasSelection));
                 RaisePropertyChanged(nameof(FilterChoices));
+                RaisePropertyChanged(nameof(FilterColumnChars));
                 RaiseDetail();
             }
         }
@@ -354,12 +399,17 @@ namespace NINA.ObservatoryPlanner.UI {
 
         public string RemainingText => SelectedTarget == null ? "" : $"{SelectedTarget.DoneFrames} of {SelectedTarget.TotalFrames} frames · {SelectedTarget.HoursRemaining:0.0} h remaining";
 
-        public string RotateAfWarning { get => rotateAfWarning; private set { rotateAfWarning = value; RaisePropertyChanged(); } }
+        public string RotateAfWarning { get => rotateAfWarning; private set { rotateAfWarning = value; RaisePropertyChanged(); RaisePropertyChanged(nameof(TabHasWarnings)); } }
+
+        private string manualFilterWarning;
+        /// <summary>NINA's Manual Filter Wheel with more than one filter in the ticked targets: the run pauses at each change.</summary>
+        public string ManualFilterWarning { get => manualFilterWarning; private set { if (manualFilterWarning == value) { return; } manualFilterWarning = value; RaisePropertyChanged(); RaisePropertyChanged(nameof(TabHasWarnings)); } }
 
         private void RaiseDetail() {
             RaisePropertyChanged(nameof(CoordinatesText));
             RaisePropertyChanged(nameof(TargetChips));
             RaisePropertyChanged(nameof(RemainingText));
+            RaisePropertyChanged(nameof(FilterColumnChars));
         }
 
         private void RaiseTargets() {
@@ -377,12 +427,18 @@ namespace NINA.ObservatoryPlanner.UI {
             : "Each stage is an Advanced Sequencer instruction set: edit it in NINA's sequencer with any instruction, including ones from other plugins. The run goes through your targets once and ends with 4.";
 
         public string WorkflowName => Options.WorkflowName ?? (planner.ActiveContainer == null ? "No workflow loaded" : "Untitled workflow");
-        public string WorkflowSavedText => planner.ActiveContainer == null ? "Use \"Load a default workflow…\" below"
-            : Options.WorkflowName != null && File.Exists(workflows.PathFor(Options.WorkflowName)) ? "Saved in Workflows" : "Not saved yet";
+        /// <summary>Tooltip of the saved mark next to the workflow name.</summary>
+        public string WorkflowSavedText => planner.ActiveContainer == null ? "No workflow loaded: use \"Load a default workflow…\" in ⓘ Info"
+            : WorkflowSaved ? "Saved in Workflows" : "Not saved yet";
+        private bool WorkflowSaved => planner.ActiveContainer != null && Options.WorkflowName != null && File.Exists(workflows.PathFor(Options.WorkflowName));
+        public string WorkflowSavedIcon => WorkflowSaved ? "✔" : "●";
+        public Brush WorkflowSavedBrush => WorkflowSaved ? PlannerBrushes.Safe : PlannerBrushes.Muted;
 
         private void RaiseWorkflow() {
             RaisePropertyChanged(nameof(WorkflowName));
             RaisePropertyChanged(nameof(WorkflowSavedText));
+            RaisePropertyChanged(nameof(WorkflowSavedIcon));
+            RaisePropertyChanged(nameof(WorkflowSavedBrush));
         }
 
         // ---------- options ----------
@@ -437,10 +493,13 @@ namespace NINA.ObservatoryPlanner.UI {
         public ICommand ResumeCommand { get; }
         public ICommand AutofocusCommand { get; }
         public string AutofocusText => planner.AutofocusPending ? "◎  Autofocus requested" : "◎  Autofocus";
+        /// <summary>The Autofocus button's word, shown next to its ◎ when the pane is wide enough.</summary>
+        public string AutofocusWord => planner.AutofocusPending ? "Autofocus requested" : "Autofocus";
         public ICommand GoOptionsCommand { get; }
         public ICommand GoInfoCommand { get; }
         public ICommand ApplyDefaultsToAllCommand { get; }
         public ICommand ResetConfirmationsCommand { get; }
+        public ICommand ResetTextSizeCommand { get; }
         public ICommand DismissEndProblemsCommand { get; }
         /// <summary>✕ on a warning: hides that text until it changes or NINA restarts.</summary>
         public ICommand DismissWarningCommand { get; }
@@ -566,7 +625,7 @@ namespace NINA.ObservatoryPlanner.UI {
 
         private void AddExposure() {
             var last = SelectedTarget.Exposures.LastOrDefault();
-            SelectedTarget.Exposures.Add(last != null ? last.Clone(keepProgress: false) : new PlannerExposure { Filter = FilterChoices.First() });
+            SelectedTarget.Exposures.Add(last != null ? last.Clone(keepProgress: false) : new PlannerExposure { Filter = HasFilterWheel ? FilterChoices.First() : "" });
         }
 
         private void DeleteExposure(object p) {
@@ -671,6 +730,8 @@ namespace NINA.ObservatoryPlanner.UI {
             var triggers = WorkflowLibrary.Describe(planner.ActiveContainer?.Stage(StageKind.Triggers));
             var warning = StageChecks.RotateWithFilterAf(Targets, triggers);
             RotateAfWarning = warning != null && dismissed.Contains(warning) ? null : warning;
+            var manual = StageChecks.ManualFilterWheel(Targets, planner.ManualFilterWheel);
+            ManualFilterWarning = manual != null && dismissed.Contains(manual) ? null : manual;
         }
 
         // ---------- workflow (the four stages) ----------
@@ -785,7 +846,7 @@ namespace NINA.ObservatoryPlanner.UI {
         }
 
         private void RaiseModeProperties() {
-            foreach (var p in new[] { nameof(WithSafety), nameof(WithoutSafety), nameof(NoSafetyWarningShown), nameof(ModeSummary), nameof(CycleHint), nameof(TargetChips) }) { RaisePropertyChanged(p); }
+            foreach (var p in new[] { nameof(WithSafety), nameof(WithoutSafety), nameof(NoSafetyWarningShown), nameof(ModeSummary), nameof(CycleHint), nameof(TargetChips), nameof(TabHasWarnings) }) { RaisePropertyChanged(p); }
             RaiseStatus();
         }
 
@@ -803,6 +864,7 @@ namespace NINA.ObservatoryPlanner.UI {
                 if (property == nameof(PlannerOptions.WorkflowName)) { RaiseWorkflow(); }
                 if (property == nameof(PlannerOptions.GuidingLimitPixels)) { RaisePropertyChanged(nameof(GuidingLimitArcsec)); }
                 if (property == nameof(PlannerOptions.UnsafeAction)) { RaisePropertyChanged(nameof(CloseUpOnUnsafe)); }
+                if (property == nameof(PlannerOptions.PanelTextSize)) { RaisePropertyChanged(nameof(PanelScale)); }
             });
         }
 
@@ -834,7 +896,7 @@ namespace NINA.ObservatoryPlanner.UI {
                 view.Hint = hints[n - 1];
                 if (c == null) {
                     view.Lines = Array.Empty<StageLine>();
-                    view.EmptyText = "No Observatory Planner workflow is loaded. Use \"Load a default workflow…\" above.";
+                    view.EmptyText = "No Observatory Planner workflow is loaded. Use \"Load a default workflow…\" in ⓘ Info.";
                     view.Warnings = Array.Empty<string>();
                     continue;
                 }
@@ -844,6 +906,7 @@ namespace NINA.ObservatoryPlanner.UI {
                 view.Warnings = StageChecks.Check(kind, entries, Options).Where(w => !dismissed.Contains(w)).ToList();
             }
             UpdateRotateWarning();
+            RaisePropertyChanged(nameof(TabHasWarnings));
         }
     }
 }

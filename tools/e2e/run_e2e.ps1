@@ -12,9 +12,12 @@ and takes screenshots of the NINA window. Results go to tools\e2e\out\<run>\resu
   single:   one target that ends by time, manual autofocus, nothing left to image
   pause:    Pause now / after frame, Start sequence (same target, mount moved, other target, camera dropped), unsafe while paused, Stop
   restart:  per-profile data, workflow auto-save, NINA restart while paused, "Start the run when NINA starts"
+  colour:   a colour camera (no filter wheel in the profile), run without safety: rows without a filter and an old "L" row
+  accessories / accessories-nosafety: a rotator and a flat panel (cover calibrator), with and without safety: the cover
+            starts closed, the target rotates to 30 deg with "Slew only", two light frames, then a flat row
 #>
 param(
-    [ValidateSet("safety", "nosafety", "ui", "negative", "timing", "single", "pause", "restart")] [string] $Scenario = "safety",
+    [ValidateSet("safety", "nosafety", "ui", "negative", "timing", "single", "pause", "restart", "colour", "accessories", "accessories-nosafety")] [string] $Scenario = "safety",
     [string] $NinaExe = "$env:ProgramFiles\N.I.N.A. - Nighttime Imaging 'N' Astronomy\NINA.exe",
     # Own ports, so a sandbox started with tools\manual\Start-SimulatorNina.ps1 (32228/32850) keeps its own safety monitor
     [int] $DiscoveryPort = 32238,
@@ -174,6 +177,16 @@ if ($Scenario -eq "safety") {
     $s1.End = [ordered]@{ Enabled = $true; By = "Time"; Altitude = 0; Time = $s1End.ToString("HH:mm:ss") }
     $targets = @($s1)
     $workflow = "Safety and dome"; $mode = "WithSafety"
+} elseif ($Scenario -like "accessories*") {
+    $flat = Exposure "Red" 1 1; $flat.Type = "Flat"
+    $acc = Target "E2E Accessories" $raA 60 "FinishEachRowFirst" @((Exposure "Red" 2 2), $flat)
+    $acc.Rotate = $true; $acc.PositionAngle = 30
+    $targets = @($acc)
+    if ($Scenario -eq "accessories") { $workflow = "Safety and dome"; $mode = "WithSafety" } else { $workflow = "No safety, no dome"; $mode = "WithoutSafety" }
+} elseif ($Scenario -eq "colour") {
+    # rows without a filter (new rows with no filter wheel) and one "L" row from an older list: no filter is changed
+    $targets = @((Target "E2E Colour" $raA 60 "RotateThroughFilters" @((Exposure "" 2 2), (Exposure "L" 2 1))))
+    $workflow = "No safety, no dome"; $mode = "WithoutSafety"
 } else {
     $targets = @((Target "E2E Target C" $raA 60 "FinishEachRowFirst" @((Exposure "Blue" 2 2))))
     $workflow = "No safety, no dome"; $mode = "WithoutSafety"
@@ -217,12 +230,25 @@ foreach ($f in @($dll, ($dll -replace "\.dll$", ".pdb"))) {
     }
 }
 Say "plugin copied to $pluginDir"
-$profileId = & (Join-Path $here "make_test_profile.ps1") -ImageFolder $images -DiscoveryPort $DiscoveryPort
+$profileId = & (Join-Path $here "make_test_profile.ps1") -ImageFolder $images -DiscoveryPort $DiscoveryPort -NoFilterWheel:($Scenario -eq "colour") -WithAccessories:($Scenario -like "accessories*")
 Say "test profile $profileId"
 $py = (Get-Command python).Source
 $safetyProc = Start-Process $py -ArgumentList "`"$(Join-Path $here 'test_safety_monitor.py')`" $DiscoveryPort $ControlPort `"$(Join-Path $run 'safety-monitor.log')`"" -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 2
-$startsUnsafe = $Scenario -in @("safety", "negative")
+$startsUnsafe = $Scenario -in @("safety", "negative", "accessories")
+if ($Scenario -like "accessories*") {
+    # as 4 End would leave them: the cover closed, the light off, the rotator at 0
+    try {
+        SimConnect "covercalibrator" $true
+        Invoke-RestMethod -Method Put "$alpaca/covercalibrator/0/calibratoroff" -Body $q -ContentType "application/x-www-form-urlencoded" -TimeoutSec 5 | Out-Null
+        Invoke-RestMethod -Method Put "$alpaca/covercalibrator/0/closecover" -Body $q -ContentType "application/x-www-form-urlencoded" -TimeoutSec 5 | Out-Null
+        SimConnect "rotator" $true
+        Invoke-RestMethod -Method Put "$alpaca/rotator/0/moveabsolute" -Body "Position=0&$q" -ContentType "application/x-www-form-urlencoded" -TimeoutSec 5 | Out-Null
+        Start-Sleep -Seconds 8
+        Say ("before the run: cover state {0} (1 = closed), rotator {1} deg" -f (Sim "covercalibrator" "coverstate"), (Sim "rotator" "position"))
+        SimConnect "covercalibrator" $false; SimConnect "rotator" $false
+    } catch { Say "could not prepare the simulated cover and rotator: $_" }
+}
 Set-Safe (-not $startsUnsafe)
 
 # ---------- launch a separate NINA ----------
@@ -653,6 +679,59 @@ try {
         $img = NextPhase "Imaging" $t 300
         Check "With 'Start the run when NINA starts' on, the run starts by itself after a restart" ($auto -and $img) $img.evt.message
         Command "show panel"; Start-Sleep -Seconds 3; Shot "73-auto-started"
+    } elseif ($Scenario -like "accessories*") {
+        Command "tab imaging"; Command "show panel"
+        if ($Scenario -eq "accessories") {
+            Wait-Event (Phase "WaitingForSafe") 180 "waiting for safe" | Out-Null
+            Check "With safety: waits for safe first" $true
+            Set-Safe $true
+        }
+        Wait-Event (Phase "Imaging" "E2E Accessories") 300 "imaging the target" | Out-Null
+        Check "1 Begin -> 2 Start of target with a rotator and a flat panel connected" $true
+        $first = Wait-Event { param($e) $e.kind -eq "info" -and $e.message -like "Frame starting: E2E Accessories*" } 240 "the first frame"
+        $infos = @(Events | Where-Object { $_.evt.kind -eq "info" } | ForEach-Object { $_.evt.message })
+        $opened = @($infos | Where-Object { $_ -eq "Flat panel: cover opened" }).Count -ge 1
+        Check "The closed cover is opened before slewing and the light frames" $opened (($infos | Where-Object { $_ -like "Flat panel*" }) -join " | ")
+        $rot = $infos | Where-Object { $_ -like "Camera rotated to*" } | Select-Object -First 1
+        $pos = [double](Sim "rotator" "mechanicalposition")
+        Check "Slew only + rotate: the camera turns to 30 deg" ([Math]::Abs($pos - 30) -lt 1) "$rot; rotator position $pos"
+        Start-Sleep -Seconds 2; Shot "13-accessories-imaging"
+        if ($Scenario -eq "accessories") {
+            Wait-Event (Phase "End" "finished") 300 "4 End (finished)" | Out-Null
+            Wait-Event (Phase "WaitingForNextNight") 180 "waiting for the next night" | Out-Null
+            Check "All done -> 4 End (finished) -> waits for the next night" $true
+        } else {
+            Wait-Event (Phase "Finished") 300 "finished" | Out-Null
+            Check "Runs once: 4 End then Finished (stops)" $true
+        }
+        $starts = @(Events | Where-Object { $_.evt.kind -eq "info" -and $_.evt.message -like "Frame starting: E2E Accessories*" } | ForEach-Object { $_.evt.message })
+        Check "2 light frames and 1 flat frame taken" ((FramesOf "E2E Accessories") -eq 3 -and @($starts | Where-Object { $_ -like "* Flat" }).Count -eq 1) ($starts -join " | ")
+        $infos = @(Events | Where-Object { $_.evt.kind -eq "info" } | ForEach-Object { $_.evt.message })
+        $flatSteps = ($infos | Where-Object { $_ -like "Flat panel*" }) -join " | "
+        Check "For the flat: cover closed and the light on" ($flatSteps -like "*cover closed*light on for the flat frames*") $flatSteps
+        $cover = Sim "covercalibrator" "coverstate"; $light = Sim "covercalibrator" "calibratorstate"
+        Check "After the flats the light is off and the cover stays closed" ("$cover" -eq "1" -and "$light" -ne "3") "coverstate=$cover (1 closed) calibratorstate=$light (3 ready = on)"
+        $files = @(Get-ChildItem $images -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in ".fits", ".fit", ".xisf" })
+        Check "NINA saved 2 LIGHT and 1 FLAT image" (@($files | Where-Object { $_.Name -like "LIGHT*" }).Count -eq 2 -and @($files | Where-Object { $_.Name -like "FLAT*" }).Count -eq 1) (($files | ForEach-Object { $_.Name }) -join ", ")
+        Start-Sleep -Seconds 2; Shot "14-accessories-done"
+    } elseif ($Scenario -eq "colour") {
+        Command "tab imaging"; Command "show panel"
+        Wait-Event (Phase "Imaging" "E2E Colour") 300 "imaging the colour target" | Out-Null
+        Check "Colour camera, run without safety: 1 Begin -> the target without a filter wheel" $true
+        Start-Sleep -Seconds 3; Shot "11-colour-imaging"
+        Wait-Event (Phase "Finished") 300 "finished" | Out-Null
+        Check "Runs once: 4 End then Finished (stops)" $true
+        $c = FramesOf "E2E Colour"; Check "All 3 frames taken (2 without a filter, 1 old 'L' row)" ($c -eq 3) "$c frames"
+        $starts = @(Events | Where-Object { $_.evt.kind -eq "info" -and $_.evt.message -like "Frame starting: E2E Colour*" } | ForEach-Object { $_.evt.message })
+        Check "No filter is named for the frames" (@($starts | Where-Object { $_ -match " L " }).Count -eq 0 -and $starts.Count -eq 3) ($starts -join " | ")
+        # (the built-in no-safety workflow's 4 End reports Warm Camera and Set Switch Value failing on the simulators, also without this change)
+        $failed = @(Events | Where-Object { $_.evt.message -like "*fail*" -and $_.evt.message -like "*filter*" } | ForEach-Object { $_.evt.message })
+        Check "No filter change was tried or failed" ($failed.Count -eq 0) ($failed -join " | ")
+        $files = @(Get-ChildItem $images -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in ".fits", ".fit", ".xisf", ".tif", ".tiff" })
+        Check "NINA saved the 3 images" ($files.Count -ge 3) (($files | ForEach-Object { $_.Name }) -join ", ")
+        $numbers = @($files | ForEach-Object { if ($_.BaseName -match '_(\d{4})$') { $matches[1] } })
+        Check "Frame numbers continue across the rows (no filter wheel: one count)" ((($numbers | Sort-Object) -join ",") -eq "0000,0001,0002") ($numbers -join ",")
+        Start-Sleep -Seconds 3; Shot "12-colour-finished"
     } else {
         Command "tab imaging"; Command "show panel"
         Wait-Event (Phase "Imaging" "E2E Target C") 300 "imaging Target C" | Out-Null

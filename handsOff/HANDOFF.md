@@ -1,4 +1,4 @@
-# Handoff notes — Observatory Planner session (last updated 2026-10-07)
+# Handoff notes — Observatory Planner session (last updated 2026-10-12)
 
 This file exists so a **new Claude session or maintainer** can pick up this
 codebase without any memory of the conversation that produced it. Read it top
@@ -41,22 +41,40 @@ NINA.
   "Unreleased". `Feature-Improvement List.txt` (the user's own list) and
   `debuglogs/` (the user's rig logs, now in .gitignore) are not committed.
 - **Installing on the rig:** the user copies a zip of the Release build from this PC
-  (`Desktop\ObservatoryPlanner-main-<commit>.zip`) into
-  `%LOCALAPPDATA%\NINA\Plugins\3.0.0\` on the rig. The GitHub release is still 1.0.0.0.
+  (`Desktop\ObservatoryPlanner-responsive-panel.zip`: the `Observatory Planner` folder plus an
+  `INSTALL.txt` with the steps) into `%LOCALAPPDATA%\NINA\Plugins\3.0.0\` on the rig. The GitHub
+  release is still 1.0.0.0.
+- **2026-10-12 work** (see "What changed on 2026-10-12" below) was committed on branch
+  `responsive-panel` (from `main` at d7497b0), fast-forwarded into `main` and pushed, like the
+  earlier rounds. Still version 1.0.0.0, CHANGELOG "Unreleased".
+- **Testers:** the user plans to ask Cloudy Nights users to test. The post is a Word document on the
+  user's Desktop ("Observatory Planner - testers wanted (Cloudy Nights post).docx"); testers ask for
+  the plugin by private message and get the zip above.
 - The manifest for 1.0.0.0 is on branch `ObservatoryPlanner/1.0.0.0` of the fork
   `nikunj3685/nina.plugin.manifests`
   (`manifests/o/ObservatoryPlanner/3.2.0/manifest.json`). The PR is **not** opened.
 - **To release later:** set the version in the csproj and the CHANGELOG heading,
-  retake `docs/images` (still 1.0: Gain, Count, Pause in the target header),
+  retake `docs/images` (still 1.0: the old wide panel with Gain, Count, Pause in the target header),
   tag it, push the tag, then replace the manifest on a new fork branch and
   validate it with `node gather.js`. The steps are in `PUBLISHING.md`.
 
-## Test results (2026-10-08/09)
+## Test results (2026-10-08 to 2026-10-12)
 
-- **Unit tests:** 210, all passing.
+- **Unit tests:** 227, all passing (210 before the responsive panel and the filter wheel changes).
+- **Colour camera e2e (2026-10-12):** new scenario `colour` (test profile without a filter wheel, run without
+  safety, rows without a filter plus an old "L" row): 8/8, frame numbers 0000-0002 across the rows. Known: the
+  built-in no-safety workflow's 4 End reports Warm Camera and 3 Set Switch Value failing on the simulators (also in
+  the nosafety run of 2026-10-08); not investigated. The Manual Filter Wheel pause is unit-tested only.
+- **Rotator and flat panel e2e (2026-10-12):** new scenarios `accessories` (with safety) 10/10 and
+  `accessories-nosafety` 9/9: OmniSim rotator and cover calibrator, the cover closed beforehand; the planner opens it
+  before the target, rotates with "Slew only" (mechanical angle: NINA's Move needs a rotator synced by a plate solve),
+  closes and lights it for the flat row, switches the light off at the end.
 - **Simulator e2e:** 78/78 on 2026-10-08 (nosafety 4, safety 22, ui 11, negative 11,
   timing 7, single 5, pause 11, restart 7); safety 22/22 and pause 11/11 again on
-  2026-10-09 after the mount recovery changed the engine loop.
+  2026-10-09 after the mount recovery changed the engine loop; nosafety 4/4 and pause 11/11 again on
+  2026-10-12 after the rotator and flat panel changes (the open-cover step runs at every target start,
+  and Start sequence now also checks the rotator and flat panel). The other scenarios were not rerun
+  after the responsive panel; they drive the panel through the E2E hook, not by clicks.
 - **Still to test on the real rig:** PHD2 closing at 4 End (IPv4 fix), GS Server
   recovery with a real AutoHome on the CQ-350 (kill GS.Server.exe mid-slew by
   daylight), the weather close-up, the guiding check / guide star lost with a real
@@ -82,7 +100,7 @@ Only the .NET 10 runtime is installed on this PC, so set roll-forward:
 
 ```bash
 export DOTNET_ROLL_FORWARD=LatestMajor
-dotnet test NINA.ObservatoryPlanner.slnx                     # 210 tests, all passing
+dotnet test NINA.ObservatoryPlanner.slnx                     # 227 tests, all passing
 dotnet build src/NINA.ObservatoryPlanner/NINA.ObservatoryPlanner.csproj -c Release
 ```
 
@@ -92,8 +110,14 @@ dotnet build src/NINA.ObservatoryPlanner/NINA.ObservatoryPlanner.csproj -c Relea
 rename the locked DLL to `*.old` and copy the new one; NINA loads it at its next
 start. The 1.1.0.0 Release build is installed there now.
 
+**Pictures of the panel:** `PanelRenderTests` (explicit) saves PNGs of every tab at
+360, 500, 820 and 1200 px with NINA's dark colours imitated: set `OP_RENDER_DIR` and
+run `dotnet test --filter FullyQualifiedName~PanelRenderTests`. The Info guide's
+example pictures (`UI/Images/info-*.png`, embedded as resources) are made by
+`Make_the_info_guide_pictures` in the same class; run it again after changing the panel.
+
 **E2E (simulators, only when asked):**
-`powershell -File tools\e2e\run_e2e.ps1 -Scenario <safety|nosafety|ui|negative|timing|single|pause|restart>`.
+`powershell -File tools\e2e\run_e2e.ps1 -Scenario <safety|nosafety|ui|negative|timing|single|pause|restart|colour|accessories|accessories-nosafety>`.
 It needs ASCOM OmniSim (Alpaca on localhost:32323) and Python 3. The scenario
 options turn "Autofocus after 1 Begin" off and remove both AF triggers, because
 the simulated images have no stars.
@@ -113,9 +137,19 @@ the simulated images have no stars.
 | Shared state, startup restore, pause watch, autofocus rules | `Nina/PlannerService.cs` |
 | Built-in workflows (the user's switch names) | `Nina/WorkflowLibrary.cs` |
 | Panel and dialogs | `UI/PlannerView.xaml`, `UI/PlannerDockableVM.cs`, `UI/Dialogs/*` |
+| Panel layout by width (first-fit buttons/menus, exposure row layouts, list beside or above details, four-row lists, auto columns, tooltips on cut-off text) | `UI/Layout.cs` |
 | Simulator test hook (DEBUG builds only) | `Nina/E2EHook.cs` |
 
 ## Pitfalls already found (don't rediscover them)
+
+- **Panel layout:** the text size option scales the whole panel with a
+  `LayoutTransform`, so all sizes in `PlannerView.xaml` and `Layout.cs` are in
+  units of NINA's 12 px text. `FirstFitPanel` hides the children it does not show
+  (Visibility Hidden), so don't bind Visibility on its direct children. Lists inside
+  `CappedScroller` need a non-virtualizing panel (`VirtualizingPanel.IsVirtualizing="False"`,
+  `ScrollViewer.CanContentScroll="False"`) so every row has a size. Warning boxes that
+  the red ⚠ should find carry `Tag="OP_Warn"`; `TabHasWarnings` in the VM decides when
+  the ⚠ shows.
 
 - NINA composes the plugin manifest and the other parts in **two MEF
   containers**; `PlannerServiceExport` keeps one static `PlannerService`.
@@ -279,8 +313,8 @@ Done, unit-tested (210 passing) and installed, not committed or tested on the ri
   `PlannerImagingRun.ContinueFrameNumber` sets the target block's NINA `ExposureInfo.Count` to
   `ExposurePlanner.FramesTakenLike` (Done over light rows with the same filter, exposure time and
   binning). Checked in the e2e pause run: Green 0002, 0003, 0004 over two resumes.
-- **Info tab** (the ! next to the ⚙ gear, `SelectedPlannerTab` 3): notes on
-  editing during a run and on adding sections in the Advanced Sequencer.
+- **Info tab** (the ! next to the ⚙ gear, `SelectedPlannerTab` 3): since 2026-10-12 a guide from
+  scratch in collapsible sections (see below).
 
 **Not verified on a real NINA yet:** 4 End after an error stop, the
 Sequencer-tab switch at startup, rotation from Framing, the autofocus timing,
@@ -288,6 +322,51 @@ the guide-star-lost and guiding-error handling with a real PHD2, and closing
 PHD2 and GS Server on disconnect, and the global pause (especially during a
 real meridian flip, dome opening and 1 Begin), and the weather close-up
 on a real cloudy night.
+
+## What changed on 2026-10-12
+
+Design first, code after: the user reviewed every change in a clickable mockup ("Planner Dock Preview",
+https://claude.ai/artifact/F1Gwc512vKRbSapn6a31Ae) before it was built.
+
+- **The panel fits any dock** (the 860 px minimum and the sideways scroll are gone). Layout helpers in
+  `UI/Layout.cs`: `FirstFitPanel` (buttons → menu), `ExposureRowPanel` (exposure rows on one line, then the
+  progress bar on its own thin line, then two or three lines), `SideBySidePanel` (list beside the details
+  at the same height, or above them), `CappedScroller` (four rows, then scroll), `AutoColumnsPanel`,
+  `TrimTip` (tooltip only on cut-off text). The top block (state + Pause/Run, the stages, the status text)
+  is fixed; the page scrolls. The stage line shows only the current stage when it does not fit. A red ⚠
+  before the status text jumps to the warnings on the tab shown (`TabHasWarnings`, `Tag="OP_Warn"`).
+- **Targets tab:** numbered targets, Target Actions menu when the buttons don't fit, ✔ saved mark with a
+  tooltip, DELAY: / ORDER: lines, ▲▼ on Exposure, Repeat and Captured frames, Filter column as wide as the
+  longest filter name + 1 (max 12), Type/Filter/Binning share spare width.
+- **"Equipment & Safety" is now "Sequence"**: collapsible stages (✎ in a collapsed heading), Sequence
+  Actions menu / icon-only Refresh when narrow. "How the night runs", Keep connected and "Load a default
+  workflow…" moved to Info.
+- **Options:** collapsible sections, labels wrap; **Display › Text size** 10–18 (default 10, NINA's text is
+  12) scales the whole panel with a `LayoutTransform` (`PanelScale`); the dialogs are not scaled.
+- **Info guide:** 18 collapsible sections generated from an outline (getting started, adding targets from
+  the Sky Atlas / Framing Assistant / planetarium, the top block, targets, Target Settings, exposures,
+  stages, weather, guiding, colour cameras and filter wheels, rotator and flat panel, pause, stop, editing
+  during a run, the Advanced Sequencer, mount software and PHD2, restarts and files), with four example
+  pictures (`UI/Images/info-*.png`, embedded resources, made by `PanelRenderTests.Make_the_info_guide_pictures`).
+- **Colour camera (no filter wheel in the profile):** Filter shows "—", new rows have no filter, no switch
+  is tried, the status names no filter, and $$FRAMENR$$ counts all light rows alike (`FramesTakenLike(anyFilter)`).
+- **NINA's Manual Filter Wheel:** its message box would block the run (and 4 End on unsafe), so a needed
+  change pauses the run with "Change the filter to … by hand, then press Start sequence"
+  (`PlannerService.ManualChangeNeeded`, `PauseForManualFilter`); after Start sequence NINA's box shows once.
+  A Targets-tab warning when the ticked targets use more than one filter.
+- **Rotator:** "Slew only" / "Don't move" now rotate too (`PlannerRotate`: sky angle when NINA's rotator is
+  synced by a plate solve, else the same mechanical angle, logged); no rotator → rotation left out with a
+  log line instead of a failing Center and Rotate.
+- **Flat panel** (`Nina/PlannerAccessories.cs`): a closed cover is opened (light off) at every target start
+  and before light frames; flat rows close the cover and switch the light on; dark/bias rows close it dark;
+  the light goes off when the target's frames end. Start sequence reconnects the rotator and flat panel.
+- **Tests and tooling:** 234 unit tests; `PanelRenderTests` (explicit) renders the panel to PNG; e2e
+  scenarios `colour`, `accessories`, `accessories-nosafety` (make_test_profile `-NoFilterWheel`,
+  `-WithAccessories`).
+
+**Not tested yet:** the new panel inside the user's real dock and theme on the rig, the text size option
+in NINA, the Manual Filter Wheel pause in NINA (unit tests only), a rotator synced by a real plate solve,
+and a real flat panel.
 
 ## Waiting for the user's decisions
 

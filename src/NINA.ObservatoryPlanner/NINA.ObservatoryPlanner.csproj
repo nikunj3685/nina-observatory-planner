@@ -40,6 +40,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- example pictures in the Info guide (made by PanelRenderTests.Make_the_info_guide_pictures) -->
+    <Resource Include="UI\Images\*.png" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="NINA.ObservatoryPlanner.Tests" />
   </ItemGroup>
 

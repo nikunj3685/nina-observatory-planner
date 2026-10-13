@@ -7,7 +7,11 @@ param(
     [Parameter(Mandatory)] [string] $ImageFolder,
     [string] $Name = "Planner Test (simulators)",
     [string] $Id = "5a7e0c1d-0000-4e2e-9e2e-0b5e1a7e5701",
-    [int] $DiscoveryPort = 32228
+    [int] $DiscoveryPort = 32228,
+    # a colour camera: no filter wheel and no filters in the profile
+    [switch] $NoFilterWheel,
+    # the simulated rotator and flat panel (cover calibrator) instead of none
+    [switch] $WithAccessories
 )
 $ErrorActionPreference = "Stop"
 $profiles = Join-Path $env:LOCALAPPDATA "NINA\Profiles"
@@ -53,6 +57,15 @@ for ($i = 0; $i -lt $names.Count; $i++) {
     ($f.ChildNodes | Where-Object { $_.LocalName -eq "_focusOffset" }).InnerText = "0"
     ($f.ChildNodes | Where-Object { $_.LocalName -eq "_autoFocusFilter" }).InnerText = "false"
     [void]$filters.AppendChild($f)
+}
+
+if ($WithAccessories) {
+    Set-Child $root.RotatorSettings "Id" "ASCOM.OmniSim.Rotator"
+    Set-Child $root.FlatDeviceSettings "Id" "ASCOM.OmniSim.CoverCalibrator"
+}
+if ($NoFilterWheel) {
+    Set-Child $root.FilterWheelSettings "Id" "No_Device"
+    while ($filters.ChildNodes.Count -gt 0) { [void]$filters.RemoveChild($filters.FirstChild) }
 }
 
 $target = Join-Path $profiles "$Id.profile"

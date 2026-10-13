@@ -47,6 +47,54 @@ namespace NINA.ObservatoryPlanner.UI {
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
     }
 
+    /// <summary>Visible when the bound width (or other number) is at least the parameter, e.g. button words in a wide pane.</summary>
+    public sealed class AtLeastVisibleConverter : IValueConverter {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+            value is double d && double.TryParse(parameter?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var min) && d >= min
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
+    }
+
+    /// <summary>Visible when the bound number equals the parameter (e.g. the layout a <see cref="FirstFitPanel"/> chose).</summary>
+    public sealed class IndexVisibleConverter : IValueConverter {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+            value?.ToString() == parameter?.ToString() ? Visibility.Visible : Visibility.Collapsed;
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
+    }
+
+    /// <summary>
+    /// Visible when all values are true or visible text: e.g. the current stage next to the state, shown only while a stage
+    /// runs and the stage line does not fit.
+    /// </summary>
+    public sealed class AllVisibleConverter : IMultiValueConverter {
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture) {
+            foreach (var v in values) {
+                var shown = v switch {
+                    bool b => b,
+                    string s => !string.IsNullOrWhiteSpace(s),
+                    Visibility vis => vis == Visibility.Visible,
+                    int i => i.ToString(CultureInfo.InvariantCulture) == (parameter?.ToString() ?? "1"),
+                    _ => v != null && v != DependencyProperty.UnsetValue
+                };
+                if (!shown) { return Visibility.Collapsed; }
+            }
+            return Visibility.Visible;
+        }
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) => null;
+    }
+
+    /// <summary>Right margin as wide as a vertical scroll bar while one is shown, so a header lines up with scrolling rows.</summary>
+    public sealed class ScrollBarMarginConverter : IValueConverter {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+            value is Visibility.Visible ? new Thickness(0, 0, SystemParameters.VerticalScrollBarWidth, 0) : new Thickness(0);
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
+    }
+
     /// <summary>Fraction of a progress bar: values Done, Count → 0..1 for a ScaleTransform.</summary>
     public sealed class FractionConverter : IMultiValueConverter {
         public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture) {
