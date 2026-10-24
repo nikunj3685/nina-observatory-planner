@@ -41,6 +41,20 @@ namespace NINA.ObservatoryPlanner.UI {
         }
     }
 
+    /// <summary>
+    /// Row number: the item's position in its list plus one (values: the item, the list, and a version that changes with
+    /// the list so the number is worked out again). WPF's AlternationIndex is not renumbered when rows move or are inserted.
+    /// </summary>
+    public sealed class RowNumberConverter : IMultiValueConverter {
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture) {
+            if (values.Length < 2 || values[1] is not System.Collections.IList list) { return ""; }
+            var i = list.IndexOf(values[0]);
+            return i < 0 ? "" : (i + 1).ToString(culture);
+        }
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) => null;
+    }
+
     /// <summary>Row number from ItemsControl.AlternationIndex.</summary>
     public sealed class PlusOneConverter : IValueConverter {
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture) => value is int i ? i + 1 : value;

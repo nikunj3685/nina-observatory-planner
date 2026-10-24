@@ -225,6 +225,7 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
         public string RotateHint {
             get {
                 if (!Rotate) { return "Camera rotation is left as it is."; }
+                if (!planner.HasRotator) { return "NINA's profile has no rotator, so the target is slewed and centered without rotating."; }
                 if (!double.TryParse(AngleText, NumberStyles.Float, CultureInfo.CurrentCulture, out var a)) { return "Enter the position angle in degrees."; }
                 a = ((a % 360) + 360) % 360;
                 return $"Camera will rotate to {a:0.#}°. NINA also accepts {(a + 180) % 360:0.#}° (the same framing turned over), within the rotation tolerance of your profile.";
@@ -295,7 +296,8 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
             if (!string.IsNullOrWhiteSpace(newName)) { Name = newName; }
             if (positionAngle is double pa) {
                 AngleText = pa.ToString("0.#", CultureInfo.CurrentCulture);
-                Rotate = Math.Abs(pa) > 0.01;
+                // the angle is filled in, but rotation is only ticked when NINA's profile has a rotator
+                Rotate = Math.Abs(pa) > 0.01 && planner.HasRotator;
             }
         }
 

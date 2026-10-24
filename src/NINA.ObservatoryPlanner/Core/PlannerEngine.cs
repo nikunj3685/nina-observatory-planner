@@ -12,6 +12,11 @@ namespace NINA.ObservatoryPlanner.Core {
 
     public interface ISafetySource { SafetyState Read(); }
 
+    /// <summary>Result of reconnecting the devices that stay connected: which came back, and which are still not connected.</summary>
+    public sealed record KeptDevicesCheck(IReadOnlyList<string> Reconnected, IReadOnlyList<string> Missing) {
+        public static readonly KeptDevicesCheck AllConnected = new(Array.Empty<string>(), Array.Empty<string>());
+    }
+
     public interface IPlannerClock {
         DateTime Now { get; }
         Task Delay(TimeSpan duration, CancellationToken token);
@@ -25,6 +30,9 @@ namespace NINA.ObservatoryPlanner.Core {
     /// <summary>Everything the engine asks the observatory to do. NINA implements it with sequencer instructions.</summary>
     public interface IPlannerHardware {
         Task ConnectKeptDevices(CancellationToken token);
+
+        /// <summary>Connects the devices that stay connected which are not connected now (one try each).</summary>
+        Task<KeptDevicesCheck> ReconnectKeptDevices(CancellationToken token) => Task.FromResult(KeptDevicesCheck.AllConnected);
         Task RunStage(StageKind stage, CancellationToken token);
         /// <summary>Runs 2 Start of target, then images until done, the window closes or the token is cancelled. Returns frames taken.</summary>
         Task<int> RunTarget(PlannerTarget target, Func<PlannerExposure, bool> canStartFrame, CancellationToken token);
@@ -83,6 +91,9 @@ namespace NINA.ObservatoryPlanner.Core {
         void Info(string message);
         /// <summary>Updates the status shown in the panel without logging it (e.g. a countdown).</summary>
         void Status(string message) { }
+
+        /// <summary>A warning shown in the panel until it is cleared (null): devices that stay connected are missing.</summary>
+        void DeviceProblem(string message) { }
     }
 
     public enum NightResult { Finished, Unsafe, Paused, Stopped, StoppedForNight, ClosedUp, MountLost }
@@ -134,8 +145,10 @@ namespace NINA.ObservatoryPlanner.Core {
         private volatile bool inEnd;
         private volatile bool nightActive;
         private volatile bool waitingForTarget;
+        private string lastPassedOver;
         private volatile bool mountLostRequested;
         private int? beginDone;
+        private readonly DeviceRecovery devices;
         private PlannerTarget current;
 
         /// <summary>How the pause watcher waits between looks at the running step. Real time by default; tests poll faster.</summary>
@@ -160,6 +173,7 @@ namespace NINA.ObservatoryPlanner.Core {
             this.safety = safety;
             this.clock = clock;
             this.log = log;
+            devices = new DeviceRecovery(options, log, () => clock.Now);
         }
 
         /// <summary>Where the run stood when it paused (set when <see cref="RunAsync"/> returns Paused).</summary>
@@ -269,8 +283,17 @@ namespace NINA.ObservatoryPlanner.Core {
             return s.Connected && s.IsSafe;
         }
 
+        private string RetryNote() => devices.RetryNote;
+
+        private Task KeepDevicesConnected(CancellationToken token, bool now = false) =>
+            devices.Check(hardware.ReconnectKeptDevices, token, now);
+
         private async Task Stage(StageKind kind, CancellationToken token, int? continueFrom = null) {
-            if (kind == StageKind.End) { inEnd = true; }
+            if (kind == StageKind.End) {
+                inEnd = true;
+                // closing the roof and switching the power off need the dome and the switch
+                await KeepDevicesConnected(token, now: true);
+            }
             try {
                 if (continueFrom is int done) { await hardware.ContinueStage(kind, done, token); } else { await hardware.RunStage(kind, token); }
             } catch (Exception) when (kind == StageKind.Begin && (pauseRequested == PauseKind.Now || mountLostRequested) && !stopRequested) {
@@ -301,7 +324,10 @@ namespace NINA.ObservatoryPlanner.Core {
                 await Stage(StageKind.End, token);
                 while (true) {
                     log.Phase(PlannerPhase.WaitingForSafe, "Paused: waiting for the safety monitor to report safe");
-                    while (!IsSafe()) { await clock.Delay(SafetyPoll, token); }
+                    while (!IsSafe()) {
+                        await KeepDevicesConnected(token);
+                        await clock.Delay(SafetyPoll, token);
+                    }
                     if (await StaysSafe(token)) { break; }
                 }
                 log.Phase(PlannerPhase.Begin, "1 Begin (after the weather, still paused)");
@@ -366,6 +392,10 @@ namespace NINA.ObservatoryPlanner.Core {
                         log.Phase(PlannerPhase.WaitingForSafe, "Waiting for the safety monitor to report safe");
                         while (!IsSafe()) {
                             if (stopRequested) { return Stopped(); }
+                            await KeepDevicesConnected(token);
+                            if (!safety.Read().Connected) {
+                                log.Status($"Waiting for safe: the safety monitor is not connected{RetryNote()}");
+                            }
                             await clock.Delay(SafetyPoll, token);
                         }
                     }
@@ -376,6 +406,7 @@ namespace NINA.ObservatoryPlanner.Core {
                         log.Phase(PlannerPhase.WaitingForNextNight, "Nothing to image tonight; the equipment stays off. Waiting for the next night");
                         while (IsSafe()) {
                             if (stopRequested) { return Stopped(); }
+                            await KeepDevicesConnected(token);
                             await clock.Delay(SafetyPoll, token);
                         }
                         continue;
@@ -400,6 +431,7 @@ namespace NINA.ObservatoryPlanner.Core {
                     log.Phase(PlannerPhase.WaitingForNextNight, $"Stopped for tonight: the guide star was lost. Starts again after {nextNight:dd MMM HH:mm}");
                     while (clock.Now < nextNight) {
                         if (stopRequested) { return Stopped(); }
+                        await KeepDevicesConnected(token);
                         var left = nextNight - clock.Now;
                         await clock.Delay(left < WaitPoll ? left : WaitPoll, token);
                     }
@@ -410,6 +442,7 @@ namespace NINA.ObservatoryPlanner.Core {
                     log.Phase(PlannerPhase.WaitingForNextNight, "Nothing left tonight. Waiting for the next night");
                     while (IsSafe()) {
                         if (stopRequested) { return Stopped(); }
+                        await KeepDevicesConnected(token);
                         await clock.Delay(SafetyPoll, token);
                     }
                 }
@@ -501,7 +534,9 @@ namespace NINA.ObservatoryPlanner.Core {
                     log.Phase(PlannerPhase.ClosedUp, Waiting());
                     continue;
                 }
-                log.Status($"{Waiting()} ({Countdown(deadline - clock.Now)} left)");
+                await KeepDevicesConnected(token);
+                var monitor = safety.Read().Connected ? "" : "; the safety monitor is not connected" + RetryNote();
+                log.Status($"{Waiting()} ({Countdown(deadline - clock.Now)} left){monitor}");
                 await clock.Delay(SafetyPoll, token);
             }
         }
@@ -515,6 +550,7 @@ namespace NINA.ObservatoryPlanner.Core {
             var nextNight = NightTime.NightEnd(clock.Now);
             log.Phase(PlannerPhase.WaitingForNextNight, $"The night is over. Starts again after {nextNight:dd MMM HH:mm}");
             while (clock.Now < nextNight && !stopRequested) {
+                await KeepDevicesConnected(token);
                 var left = nextNight - clock.Now;
                 await clock.Delay(left < WaitPoll ? left : WaitPoll, token);
             }
@@ -583,6 +619,7 @@ namespace NINA.ObservatoryPlanner.Core {
             }) : Task.CompletedTask;
 
             var skipTonight = new HashSet<Guid>();
+            lastPassedOver = null;
             var guideLostStop = false;
             IReadOnlyList<GapStep> gapResume = null;
             current = null;
@@ -600,6 +637,7 @@ namespace NINA.ObservatoryPlanner.Core {
                 beginComplete = true;
                 if (reopen) {
                     log.Phase(PlannerPhase.ClosedUp, "Safe again: opening the dome and unparking");
+                    await KeepDevicesConnected(night.Token, now: true); // without the dome the roof would stay shut
                     if (!await hardware.Reopen(night.Token)) {
                         log.Info("Opening up after the weather failed: 4 End runs");
                         nightActive = false;
@@ -615,6 +653,18 @@ namespace NINA.ObservatoryPlanner.Core {
                     night.Token.ThrowIfCancellationRequested();
                     if (PausePending) { return await PauseNight(); }
                     var d = selector.Decide(targets(), clock.Now, skipTonight);
+                    if (d.Target != null) {
+                        // Say why targets higher in the list are not the one chosen (list order is priority), once per choice:
+                        // while waiting the decision is made again every poll.
+                        var passed = selector.PassedOver(targets(), d.Target, clock.Now, skipTonight);
+                        var key = $"{d.Kind}|{d.Target.Id}|{string.Join("|", passed.Select(l => l[..l.IndexOf(" is not started", StringComparison.Ordinal)]))}";
+                        if (key != lastPassedOver) {
+                            lastPassedOver = key;
+                            foreach (var line in passed) {
+                                log.Info(line);
+                            }
+                        }
+                    }
 
                     if (d.Kind == DecisionKind.RunNow) {
                         var t = d.Target;
@@ -747,6 +797,7 @@ namespace NINA.ObservatoryPlanner.Core {
                 nightActive = false;
                 if (watchSafety && options.UnsafeAction == UnsafeAction.CloseUpAndWait && beginComplete && !stopRequested) {
                     log.Phase(PlannerPhase.ClosedUp, "Unsafe: closing up (stop guiding, park, close the dome); power and camera cooling stay on");
+                    await KeepDevicesConnected(token, now: true); // the dome must be there to close it
                     if (await hardware.CloseUp(token)) { return NightResult.ClosedUp; }
                     log.Info("Closing up failed (park or dome): 4 End runs instead");
                 }

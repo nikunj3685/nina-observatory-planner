@@ -42,6 +42,23 @@ namespace NINA.ObservatoryPlanner.Tests {
         }
 
         [Test]
+        public void Without_NINA_a_rotator_is_assumed_so_rotation_chips_stay_plain() {
+            var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "op-rot-" + System.Guid.NewGuid().ToString("N"));
+            try {
+                var planner = new PlannerService(null, root);
+                planner.HasRotator.Should().BeTrue();
+                var t = planner.NewTarget("IC 443 1");
+                t.Rotate = true;
+                t.PositionAngle = 90;
+                planner.Targets.Add(t);
+                var vm = new UI.PlannerDockableVM(new Moq.Mock<NINA.Profile.Interfaces.IProfileService>().Object, planner) { SelectedTarget = t };
+                vm.TargetChips.Should().Contain("Rotate 90°");
+            } finally {
+                try { System.IO.Directory.Delete(root, true); } catch (System.IO.IOException) { }
+            }
+        }
+
+        [Test]
         public void Without_a_flat_panel_nothing_happens() {
             FlatPanel.Prepare(null, PanelUse.Flat, null, default).GetAwaiter().GetResult().Should().BeFalse();
         }

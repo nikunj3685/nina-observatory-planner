@@ -20,6 +20,52 @@ namespace NINA.ObservatoryPlanner.Tests {
             return (TestData.Selector(), new List<PlannerTarget> { t1, t2 }, t1, t2);
         }
 
+        /// <summary>
+        /// The user's IC 443 mosaic: Panel 1 (further east) is above Panel 2 in the list and both start at 40° altitude, so
+        /// Panel 2 opens a few minutes first and is imaged. The log says why Panel 1 was passed over and when it opens.
+        /// </summary>
+        [Test]
+        public void The_log_says_why_a_higher_target_is_passed_over() {
+            static PlannerTarget Panel(string name, double ra) {
+                var t = TestData.Circumpolar(name, frames: 200);
+                t.RaHours = ra;
+                t.DecDegrees = 22.790555555555557;
+                t.Start = new TimeConstraint { Enabled = true, By = ConstraintBy.Altitude, Altitude = 40 };
+                return t;
+            }
+
+            var p1 = Panel("IC 443 Panel 1", 6.364833333333333);
+            var p2 = Panel("IC 443 Panel 2", 6.286666666666665);
+            var off = TestData.Circumpolar("Unchecked");
+            off.Enabled = false;
+            var list = new List<PlannerTarget> { off, p1, p2 };
+            var s = TestData.Selector();
+
+            var p2Opens = s.OpensAt(p2, TestData.Night(20)).Value;
+            var d = s.Decide(list, p2Opens);
+            d.Kind.Should().Be(DecisionKind.RunNow);
+            d.Target.Should().BeSameAs(p2);
+
+            var p1Opens = s.OpensAt(p1, p2Opens).Value;
+            (p1Opens - p2Opens).Should().BeCloseTo(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1), "4.7 min of RA further east");
+            var lines = s.PassedOver(list, p2, p2Opens);
+            lines.Should().ContainSingle("unchecked targets are not reported");
+            lines[0].Should().StartWith("IC 443 Panel 1 is not started: it is at 3").And.Contain("starts at 40° altitude")
+                .And.EndWith($"opens at {p1Opens:HH:mm}");
+        }
+
+        [Test]
+        public void Passed_over_reasons_cover_complete_and_skipped_targets() {
+            var done = TestData.Circumpolar("Done", frames: 1);
+            done.Exposures[0].Done = 1;
+            var skipped = TestData.Circumpolar("Skipped");
+            var chosen = TestData.Circumpolar("Chosen");
+            var lines = TestData.Selector().PassedOver(new[] { done, skipped, chosen }, chosen, TestData.Night(22), new HashSet<Guid> { skipped.Id });
+            lines.Should().Equal(
+                "Done is not started: all its frames are taken",
+                "Skipped is not started: it was skipped for the rest of tonight (reason logged earlier)");
+        }
+
         [Test]
         public void Evening_runs_target_1() {
             var (s, list, t1, _) = UserNight();

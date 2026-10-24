@@ -94,6 +94,9 @@ namespace NINA.ObservatoryPlanner.Nina {
 
         public bool ImagingStarted(PlannerTarget target) => planner.ImagingTargetId == target.Id;
 
+        public Task<KeptDevicesCheck> ReconnectKeptDevices(CancellationToken token) =>
+            planner.ReconnectKeptDevices((device, t) => RunStandalone(F.Connect(device), t), token);
+
         public async Task ConnectKeptDevices(CancellationToken token) {
             foreach (var device in Devices.Where(planner.Options.Keeps)) {
                 await RunStandalone(F.Connect(device), token);

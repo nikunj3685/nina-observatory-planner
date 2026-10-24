@@ -296,6 +296,18 @@ try {
         Check "Stage 4 parked the mount" ("$park" -eq "True") "atpark=$park"
         Shot "04-unsafe-shutdown-waiting"
 
+        # device recovery: the safety monitor and dome drop while waiting (the rig on 24 Oct: their Alpaca server hung)
+        $t = Get-Date; Command "disconnect kept devices"
+        $deadline = (Get-Date).AddSeconds(150); $smBack = $null; $domeBack = $null
+        while ((-not $smBack -or -not $domeBack) -and (Get-Date) -lt $deadline) {
+            Start-Sleep 1
+            $recent = Events | Where-Object { $_.evt.kind -eq "info" -and (EvTime $_) -ge $t }
+            $smBack = $recent | Where-Object { $_.evt.message -like "Device recovery: Safety Monitor*reconnected*" } | Select-Object -First 1
+            $domeBack = $recent | Where-Object { $_.evt.message -like "Device recovery: Dome*reconnected*" } | Select-Object -First 1
+        }
+        $sm = Invoke-RestMethod "http://127.0.0.1:$ControlPort/control/state" -TimeoutSec 5
+        Check "Device recovery: a dropped safety monitor and dome are reconnected while waiting for safe" ($smBack -and $domeBack -and [bool]$sm.connected) "$($smBack.evt.message); $($domeBack.evt.message); monitor connected=$($sm.connected)"
+
         Set-Safe $true
         $beginCount = @(Events | Where-Object { $_.evt.kind -eq "phase" -and $_.evt.phase -eq "Begin" }).Count
         $deadline = (Get-Date).AddSeconds(300)
@@ -568,6 +580,9 @@ try {
         $begins = @(PhaseEvents | Where-Object { $_.evt.phase -eq "Begin" -and (EvTime $_) -ge $t }).Count
         Check "Start sequence, same target, mount not moved: no 1 Begin, no slew, guiding restarts and imaging continues" ($r.evt.message -like "Resume:*mount where it was*" -and $begins -eq 0) $r.evt.message
         Check "A filter changed while paused is used for the next frames" ([bool]$green) "first Green frame at $(if ($green) { EvTime $green })"
+        # the run continues (Run forever may never end): closing NINA now must not bring it back paused
+        $resumedState = Get-Content (Join-Path $root "Profiles\$profileId\state.json") -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+        Check "After Start sequence the saved state is no longer paused (NINA restarted mid-run starts normally)" ($resumedState -and -not $resumedState.Paused) "state.json Paused=$($resumedState.Paused)"
         Shot "62-resumed-same-target"
 
         # 3) Pause now during a frame: that frame is dropped

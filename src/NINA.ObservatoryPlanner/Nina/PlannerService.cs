@@ -131,6 +131,63 @@ namespace NINA.ObservatoryPlanner.Nina {
         /// <summary>Adds a problem to the note shown under the status bar (kept until 4 End runs again).</summary>
         internal void AddEndProblem(string text) => EndProblems = EndProblems == null ? text : EndProblems + " " + text;
 
+        private string deviceProblem;
+        /// <summary>Devices that stay connected and have been missing too long (device recovery keeps trying), or null.</summary>
+        public string DeviceProblem { get => deviceProblem; private set => Set(ref deviceProblem, value); }
+        internal void SetDeviceProblem(string text) => DeviceProblem = text;
+
+        /// <summary>Each NINA device as Connect Equipment names it, whether the profile has one set up, and whether it is connected.</summary>
+        private IEnumerable<(string Device, bool Configured, Func<bool> Connected)> AllDevices() {
+            var p = Nina.Profile.ActiveProfile;
+            static bool Set(string id) => !string.IsNullOrWhiteSpace(id) && id != "No_Device";
+            yield return ("Safety Monitor", Set(p.SafetyMonitorSettings.Id), () => Nina.SafetyMonitor.GetInfo()?.Connected == true);
+            yield return ("Switch", Set(p.SwitchSettings.Id), () => Nina.Switches.GetInfo()?.Connected == true);
+            yield return ("Dome", Set(p.DomeSettings.Id), () => Nina.Dome.GetInfo()?.Connected == true);
+            yield return ("Weather", Set(p.WeatherDataSettings.Id), () => Nina.Weather.GetInfo()?.Connected == true);
+            yield return ("Camera", Set(p.CameraSettings.Id), () => Nina.Camera.GetInfo()?.Connected == true);
+            yield return ("Filter Wheel", Set(p.FilterWheelSettings.Id), () => Nina.FilterWheel.GetInfo()?.Connected == true);
+            yield return ("Focuser", Set(p.FocuserSettings.Id), () => Nina.Focuser.GetInfo()?.Connected == true);
+            yield return ("Rotator", Set(p.RotatorSettings.Id), () => Nina.Rotator.GetInfo()?.Connected == true);
+            yield return ("Mount", Set(p.TelescopeSettings.Id), () => Nina.Telescope.GetInfo()?.Connected == true);
+            yield return ("Guider", Set(p.GuiderSettings.GuiderName) && p.GuiderSettings.GuiderName != "No_Guider", () => Nina.Guider.GetInfo()?.Connected == true);
+            yield return ("Flat Panel", Set(p.FlatDeviceSettings.Id), () => Nina.FlatDevice.GetInfo()?.Connected == true);
+        }
+
+        /// <summary>The devices that stay connected (and are set up in NINA's profile) which are not connected now.</summary>
+        public IReadOnlyList<string> MissingKeptDevices() {
+            if (Nina?.Profile?.ActiveProfile == null) { return Array.Empty<string>(); }
+            static bool Connected(Func<bool> f) { try { return f(); } catch (Exception) { return false; } }
+            try {
+                return AllDevices().Where(d => d.Configured && Options.Keeps(d.Device) && !Connected(d.Connected)).Select(d => d.Device).ToList();
+            } catch (Exception ex) {
+                Logger.Error(ex);
+                return Array.Empty<string>();
+            }
+        }
+
+        /// <summary>One try to connect each missing device that stays connected; <paramref name="connect"/> runs NINA's Connect Equipment.</summary>
+        internal async Task<KeptDevicesCheck> ReconnectKeptDevices(Func<string, CancellationToken, Task> connect, CancellationToken token) {
+            var back = new List<string>();
+            var missing = new List<string>();
+            foreach (var device in MissingKeptDevices()) {
+                await connect(device, token);
+                if (MissingKeptDevices().Contains(device)) { missing.Add(device); } else { back.Add(device); }
+            }
+            return new KeptDevicesCheck(back, missing);
+        }
+
+        /// <summary>Connect Equipment for one device, outside the sequence (used while paused, when nothing runs in NINA).</summary>
+        private async Task ConnectOutsideRun(string device, CancellationToken token) {
+            try {
+                await Factory.Connect(device).Run(new Progress<ApplicationStatus>(), token);
+            } catch (OperationCanceledException) when (token.IsCancellationRequested) {
+                throw;
+            } catch (Exception ex) {
+                Logger.Error(ex);
+                Log.Info($"Connect {device} failed: {ex.Message}");
+            }
+        }
+
         /// <summary>The filter of the last light frame (kept across targets, pauses and weather stops), or null.</summary>
         public string LastLightFilter { get; private set; }
 
@@ -236,12 +293,16 @@ namespace NINA.ObservatoryPlanner.Nina {
         private void StartPauseWatch() {
             pauseWatch?.Cancel();
             var cts = pauseWatch = new CancellationTokenSource();
+            var devices = new DeviceRecovery(Options, Log, () => DateTime.Now);
             _ = Task.Run(async () => {
                 var warned = false;
                 while (!cts.IsCancellationRequested) {
                     try { await Task.Delay(PauseWatchInterval, cts.Token); } catch (OperationCanceledException) { return; }
                     if (!IsPaused || IsRunning || Nina == null) { continue; }
                     try {
+                        // a paused run still watches the weather, so it needs the devices that stay connected
+                        await devices.Check(t => ReconnectKeptDevices(ConnectOutsideRun, t), cts.Token);
+                        if (!IsPaused || IsRunning) { continue; }
                         if (Options.RunMode == RunMode.WithSafety) {
                             var safety = Nina.SafetyMonitor.GetInfo();
                             if (safety?.Connected == true && !safety.IsSafe) {
@@ -341,6 +402,14 @@ namespace NINA.ObservatoryPlanner.Nina {
             pendingStart = StartKind.Normal;
             // a run started from NINA's own sequencer while paused continues the paused run
             if (start == StartKind.Normal && IsPaused) { start = StartKind.Resume; }
+            var resumeFrom = PausePoint;
+            if (start == StartKind.Resume) {
+                // The pause is over once the run continues: a Run forever run may never end, so clear the saved pause now,
+                // or closing NINA during the run brings it back paused at the next start.
+                IsPaused = false;
+                PausePoint = null;
+                SavePauseState();
+            }
             pauseWatch?.Cancel();
             PauseNote = null;
             pendingPauseNote = null;
@@ -353,7 +422,7 @@ namespace NINA.ObservatoryPlanner.Nina {
             engine = e;
             if (start != StartKind.Normal) { Log.Info($"Run starts as: {start}"); }
             try {
-                var outcome = await e.RunAsync(token, start, PausePoint);
+                var outcome = await e.RunAsync(token, start, resumeFrom);
                 if (outcome == RunOutcome.Paused) {
                     PausePoint = e.Paused;
                     PauseNote = e.PausedReason ?? pendingPauseNote;
@@ -379,6 +448,7 @@ namespace NINA.ObservatoryPlanner.Nina {
             } finally {
                 engine = null;
                 IsRunning = false;
+                DeviceProblem = null; // stopped: the user is in control; paused: the pause watch takes over
                 Raise(nameof(PausePending));
             }
         }
@@ -682,6 +752,15 @@ namespace NINA.ObservatoryPlanner.Nina {
         /// Without NINA (tests) a filter wheel is assumed.
         /// </summary>
         public bool HasFilterWheel => Nina?.Profile?.ActiveProfile == null || (!string.IsNullOrWhiteSpace(FilterWheelId) && FilterWheelId != "No_Device");
+
+        private string RotatorId => Nina?.Profile?.ActiveProfile?.RotatorSettings?.Id;
+
+        /// <summary>
+        /// The NINA profile has a camera rotator. Without one a target's rotation is not used (2 Start of target slews and
+        /// centers without rotating), and targets from the Framing Assistant don't get rotation ticked. Without NINA (tests)
+        /// a rotator is assumed.
+        /// </summary>
+        public bool HasRotator => Nina?.Profile?.ActiveProfile == null || (!string.IsNullOrWhiteSpace(RotatorId) && RotatorId != "No_Device");
 
         /// <summary>The filter wheel is NINA's Manual Filter Wheel: each change shows a message box that waits for someone to click OK.</summary>
         public bool ManualFilterWheel => FilterWheelId == ManualFilterWheelId;

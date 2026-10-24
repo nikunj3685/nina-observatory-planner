@@ -143,6 +143,53 @@ namespace NINA.ObservatoryPlanner.Tests {
         }
 
         [Test]
+        public void Target_and_exposure_numbers_follow_the_order_after_adding_and_moving() {
+            var root = Path.Combine(Path.GetTempPath(), "op-numbers-" + Guid.NewGuid().ToString("N"));
+            try {
+                var planner = new PlannerService(null, root);
+                foreach (var name in new[] { "M 33", "IC 443 1", "IC 443 2", "Barnard 175" }) { planner.Targets.Add(planner.NewTarget(name)); }
+                var vm = new PlannerDockableVM(new Mock<IProfileService>().Object, planner);
+                var template = (DataTemplate)new PlannerView()["NINA.ObservatoryPlanner.UI.PlannerDockableVM_Dockable"];
+                var w = new Window { Content = new ContentControl { Content = vm, ContentTemplate = template }, Width = 1200, Height = 900, ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000 };
+                w.Show();
+
+                // as on the rig: a new target is added at the end, then moved to the top
+                var added = planner.NewTarget("Sh2 170");
+                planner.Targets.Add(added);
+                vm.SelectedTarget = added;
+                for (var i = 0; i < 4; i++) { vm.MoveUpCommand.Execute(null); }
+                w.UpdateLayout();
+
+                string NumberOf(ListBoxItem item) => FindAll<TextBlock>(item).First(t => Grid.GetColumn(t) == 1 && t.Parent is Grid).Text;
+                var list = FindAll<ListBox>(w).First();
+                var numbers = Enumerable.Range(0, planner.Targets.Count).Select(i => NumberOf((ListBoxItem)list.ItemContainerGenerator.ContainerFromIndex(i))).ToList();
+                planner.Targets[0].Name.Should().Be("Sh2 170");
+                numbers.Should().Equal("1", "2", "3", "4", "5");
+
+                // exposure rows: add two and move the last one up
+                added.Exposures.Add(new PlannerExposure { Filter = "Ha" });
+                added.Exposures.Add(new PlannerExposure { Filter = "OIII" });
+                vm.ExposureUpCommand.Execute(added.Exposures[2]);
+                w.UpdateLayout();
+                var rows = FindAll<ExposureRowPanel>(w).Where(r => !r.IsHeader).ToList();
+                rows.Select(r => FindAll<TextBlock>(r).First(t => t.FontFamily.Source.Contains("Consolas")).Text).Should().Equal("1", "2", "3");
+                w.Close();
+            } finally {
+                try { Directory.Delete(root, true); } catch (IOException) { }
+            }
+        }
+
+        private static System.Collections.Generic.List<T> FindAll<T>(DependencyObject d) where T : DependencyObject {
+            var found = new System.Collections.Generic.List<T>();
+            for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(d); i++) {
+                var c = System.Windows.Media.VisualTreeHelper.GetChild(d, i);
+                if (c is T t) { found.Add(t); }
+                found.AddRange(FindAll<T>(c));
+            }
+            return found;
+        }
+
+        [Test]
         public void Columns_follow_the_width() {
             AutoColumnsPanel.ColumnsFor(300, 4, 330, 10, 2).Should().Be(1);
             AutoColumnsPanel.ColumnsFor(700, 4, 330, 10, 2).Should().Be(2);

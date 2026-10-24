@@ -164,7 +164,9 @@ namespace NINA.ObservatoryPlanner.UI {
                 RaisePropertyChanged(nameof(GuidingLimitArcsec));
                 RaisePropertyChanged(nameof(MountIsGss));
                 RaisePropertyChanged(nameof(HasFilterWheel));
+                RaisePropertyChanged(nameof(TargetChips));
                 RaisePropertyChanged(nameof(FilterColumnChars));
+                RaisePropertyChanged(nameof(MissingDevicesNote));
                 // save the workflow whenever it changes, so a NINA restart brings back the exact stages
                 if (!planner.IsRunning) {
                     try { if (workflows.AutoSave()) { RaiseWorkflow(); } } catch (Exception ex) { Logger.Error(ex); }
@@ -233,6 +235,21 @@ namespace NINA.ObservatoryPlanner.UI {
         /// <summary>4 End steps that failed the last time it ran, or null.</summary>
         public string EndProblems => planner.EndProblems;
 
+        /// <summary>Devices that stay connected and have been missing too long during a run or pause (recovery keeps trying), or null.</summary>
+        public string DeviceProblem => planner.DeviceProblem;
+
+        /// <summary>
+        /// While stopped: the devices that stay connected which are not connected (the planner does not reconnect them then;
+        /// Run connects them), or null.
+        /// </summary>
+        public string MissingDevicesNote {
+            get {
+                if (planner.IsRunning || planner.IsPaused) { return null; }
+                var missing = planner.MissingKeptDevices();
+                return missing.Count == 0 ? null : $"Not connected: {string.Join(", ", missing)}. Run connects them.";
+            }
+        }
+
         public string StatusText {
             get {
                 if (planner.IsPaused && !planner.IsRunning) {
@@ -298,6 +315,9 @@ namespace NINA.ObservatoryPlanner.UI {
                     break;
                 case nameof(PlannerService.EndProblems):
                     RaisePropertyChanged(nameof(EndProblems));
+                    break;
+                case nameof(PlannerService.DeviceProblem):
+                    RaisePropertyChanged(nameof(DeviceProblem));
                     break;
                 case nameof(PlannerService.ListName):
                 case nameof(PlannerService.ListPath):
@@ -372,6 +392,10 @@ namespace NINA.ObservatoryPlanner.UI {
         public bool HasSelection => SelectedTarget != null;
 
         /// <summary>For the target list icons: the target being imaged now and the one the run is paused on.</summary>
+        private int listVersion;
+        /// <summary>Changes whenever a target or an exposure row is added, removed or moved, so the row numbers are worked out again.</summary>
+        public int ListVersion { get => listVersion; private set { listVersion = value; RaisePropertyChanged(); } }
+
         public TargetListState ListState => new(
             planner.IsRunning && planner.Phase == PlannerPhase.Imaging ? planner.CurrentTarget?.Id : null,
             planner.IsPaused && !planner.IsRunning ? planner.PausePoint?.TargetId : null);
@@ -390,7 +414,8 @@ namespace NINA.ObservatoryPlanner.UI {
                     t.Start.Enabled ? "starts at " + Constraint(t.Start) : WithSafety ? "starts when safe" : "starts when dark",
                     t.End.Enabled ? "ends at " + Constraint(t.End) : WithSafety ? "runs until unsafe" : "runs until dawn"
                 };
-                if (t.Rotate) { chips.Add($"Rotate {t.PositionAngle:0.#}°"); }
+                // without a rotator in NINA's profile the rotation is not used: 2 Start of target only slews and centers
+                if (t.Rotate) { chips.Add(planner.HasRotator ? $"Rotate {t.PositionAngle:0.#}°" : $"Rotate {t.PositionAngle:0.#}° · no rotator"); }
                 return chips;
             }
         }
@@ -589,7 +614,8 @@ namespace NINA.ObservatoryPlanner.UI {
                 t.RaHours = r.Coordinates.RA;
                 t.DecDegrees = r.Coordinates.Dec;
                 t.PositionAngle = r.DSOPositionAngle;
-                t.Rotate = Math.Abs(r.DSOPositionAngle) > 0.01;
+                // the angle is kept, but rotation is only ticked when NINA's profile has a rotator
+                t.Rotate = Math.Abs(r.DSOPositionAngle) > 0.01 && planner.HasRotator;
                 Targets.Add(t);
                 first ??= t;
             }
@@ -705,6 +731,7 @@ namespace NINA.ObservatoryPlanner.UI {
         private void WatchTargets() {
             void Changed(object s, EventArgs e) {
                 Ui.Run(() => {
+                    if (e is System.Collections.Specialized.NotifyCollectionChangedEventArgs) { ListVersion++; }
                     RaiseTargets();
                     UpdateRotateWarning();
                     saveTimer?.Stop();

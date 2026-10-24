@@ -205,6 +205,9 @@ namespace NINA.ObservatoryPlanner.Core {
         private bool mountRecovery = true;
         private int mountRecoveryTries = 3;
         private bool closeRoofWhenRecoveryFails;
+        private bool deviceRecovery = true;
+        private int deviceRecoveryMinutes = 1;
+        private int deviceMissingWarnMinutes = 15;
         private string workflowName;
         private int safeDelaySeconds;
         private bool autoStartOnLaunch;
@@ -243,6 +246,15 @@ namespace NINA.ObservatoryPlanner.Core {
         [JsonProperty] public int MountRecoveryTries { get => mountRecoveryTries; set => Set(ref mountRecoveryTries, Math.Max(1, Math.Min(10, value))); }
         /// <summary>When the mount position is unknown (recovery failed or not possible), close the dome/roof anyway when needed.</summary>
         [JsonProperty] public bool CloseRoofWhenRecoveryFails { get => closeRoofWhenRecoveryFails; set => Set(ref closeRoofWhenRecoveryFails, value); }
+        /// <summary>
+        /// While a run is going or paused: reconnect the devices that stay connected (safety monitor, switch, dome, weather)
+        /// when they drop, e.g. when their Alpaca server stops answering for a while. Not done while the planner is stopped.
+        /// </summary>
+        [JsonProperty] public bool DeviceRecovery { get => deviceRecovery; set => Set(ref deviceRecovery, value); }
+        /// <summary>How often a dropped device is tried again (minutes).</summary>
+        [JsonProperty] public int DeviceRecoveryMinutes { get => deviceRecoveryMinutes; set => Set(ref deviceRecoveryMinutes, Math.Max(1, Math.Min(30, value))); }
+        /// <summary>A warning is shown in the panel when a device is still not connected after this many minutes.</summary>
+        [JsonProperty] public int DeviceMissingWarnMinutes { get => deviceMissingWarnMinutes; set => Set(ref deviceMissingWarnMinutes, Math.Max(1, Math.Min(240, value))); }
 
         /// <summary>With safety: once the monitor reports safe, wait this long (it must stay safe) before 1 Begin.</summary>
         [JsonProperty] public int SafeDelaySeconds { get => safeDelaySeconds; set => Set(ref safeDelaySeconds, Math.Max(0, value)); }
@@ -280,6 +292,7 @@ namespace NINA.ObservatoryPlanner.Core {
             DefaultDelayFirst = o.DefaultDelayFirst; DefaultDelayBetween = o.DefaultDelayBetween; DefaultOrder = o.DefaultOrder;
             ConfirmDeleteTarget = o.ConfirmDeleteTarget; ConfirmDeleteExposure = o.ConfirmDeleteExposure; NightLimitEnabled = o.NightLimitEnabled; NightLimit = o.NightLimit; CloseUpEnd = o.CloseUpEnd;
             MountRecovery = o.MountRecovery; MountRecoveryTries = o.MountRecoveryTries; CloseRoofWhenRecoveryFails = o.CloseRoofWhenRecoveryFails;
+            DeviceRecovery = o.DeviceRecovery; DeviceRecoveryMinutes = o.DeviceRecoveryMinutes; DeviceMissingWarnMinutes = o.DeviceMissingWarnMinutes;
             SafeDelaySeconds = o.SafeDelaySeconds; AutoStartOnLaunch = o.AutoStartOnLaunch; AutofocusAfterBegin = o.AutofocusAfterBegin;
             GuideLostWatch = o.GuideLostWatch; GuideLostWaitSeconds = o.GuideLostWaitSeconds; GuideLostAction = o.GuideLostAction;
             GuidingCheck = o.GuidingCheck; GuidingLimitPixels = o.GuidingLimitPixels; GuidingCheckWaitSeconds = o.GuidingCheckWaitSeconds;

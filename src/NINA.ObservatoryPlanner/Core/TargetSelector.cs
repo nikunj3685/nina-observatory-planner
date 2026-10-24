@@ -65,6 +65,70 @@ namespace NINA.ObservatoryPlanner.Core {
             return true;
         }
 
+        /// <summary>Why <paramref name="t"/> cannot be imaged at <paramref name="local"/>, or null when its window is open.</summary>
+        public string WhyClosed(PlannerTarget t, DateTime local) {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            if (!IsDark(local)) { return "it is not dark enough yet"; }
+            var alt = Altitude(t, local);
+            if (alt <= 0) { return "it is below the horizon"; }
+
+            if (t.Start.Enabled) {
+                if (t.Start.By == ConstraintBy.Time) {
+                    var at = NightTime.At(t.Start.Time, local);
+                    if (local < at) { return string.Format(inv, "it starts at {0:HH:mm}", at); }
+                } else if (alt < t.Start.Altitude) {
+                    return string.Format(inv, "it is at {0:0.0}° and starts at {1:0.#}° altitude", alt, t.Start.Altitude);
+                }
+            }
+            if (t.End.Enabled) {
+                if (t.End.By == ConstraintBy.Time) {
+                    var at = NightTime.At(t.End.Time, local);
+                    if (local >= at) { return string.Format(inv, "its window ended at {0:HH:mm}", at); }
+                } else if (alt < t.End.Altitude && IsSetting(t, local)) {
+                    return string.Format(inv, "it has set below its end altitude of {0:0.#}° (now {1:0.0}°)", t.End.Altitude, alt);
+                }
+            }
+            return null;
+        }
+
+        /// <summary>The first minute tonight after <paramref name="local"/> at which the window of <paramref name="t"/> opens.</summary>
+        public DateTime? OpensAt(PlannerTarget t, DateTime local) {
+            var end = NightTime.NightEnd(local);
+            for (var at = local + ScanStep; at < end; at += ScanStep) {
+                if (IsOpenAt(t, at)) { return at; }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// For the log: why each checked target above <paramref name="chosen"/> in the list is not the one imaged at
+        /// <paramref name="local"/>. Unchecked targets are left out.
+        /// </summary>
+        public IReadOnlyList<string> PassedOver(IEnumerable<PlannerTarget> targets, PlannerTarget chosen, DateTime local, ISet<Guid> skipTonight = null) {
+            var lines = new List<string>();
+            foreach (var t in targets) {
+                if (ReferenceEquals(t, chosen) || t.Id == chosen?.Id) { break; }
+                if (!t.Enabled) { continue; }
+
+                string why;
+                if (t.IsComplete) {
+                    why = "all its frames are taken";
+                } else if (t.TotalFrames == 0) {
+                    why = "it has no exposures to take";
+                } else if (skipTonight != null && skipTonight.Contains(t.Id)) {
+                    why = "it was skipped for the rest of tonight (reason logged earlier)";
+                } else {
+                    why = WhyClosed(t, local);
+                    if (why == null) { continue; }
+                    var opens = OpensAt(t, local);
+                    // with the Night setting off a target can "open" in daylight: that is not tonight
+                    why += opens is DateTime o && SunAltitude(o) < 0 ? $"; opens at {o:HH:mm}" : "; it does not open again tonight";
+                }
+                lines.Add($"{t.Name} is not started: {why}");
+            }
+            return lines;
+        }
+
         /// <summary>Like NINA's Loop Until Time: a frame is only started if the window is still open when it ends.</summary>
         public bool CanStartFrame(PlannerTarget t, DateTime local, TimeSpan duration) => IsOpenAt(t, local) && IsOpenAt(t, local + duration);
 

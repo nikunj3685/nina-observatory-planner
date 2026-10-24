@@ -54,6 +54,18 @@ Fixes and improvements from the first test nights.
 - **Camera rotator:** "Rotate camera to" now also works with "Slew only" and "Don't move": the planner turns the rotator before guiding starts (to the sky angle once a plate solve has synced it, otherwise to the same mechanical angle, which the log notes). Without a connected rotator the rotation is left out with a log line instead of failing Center and Rotate. Start sequence reconnects the rotator and the flat panel too.
 - **Flat panel:** before a target starts the planner opens a closed cover and switches the light off (4 End or flats may have closed it), so slewing, plate solving and light frames never look at a closed cover. Flat rows close the cover and switch the light on; dark and bias rows close it with the light off; the light is switched off when the target's frames end. Tested on the simulators with and without safety.
 
+- **No rotator, no rotation:** without a rotator in NINA's profile, targets from the Framing Assistant (also mosaics) no longer get "Rotate camera to" ticked, a target with rotation shows "Rotate 90° · no rotator", and Target Settings says it will be slewed and centered without rotating. (On the rig a mosaic panel with rotation and no rotator was never slewed: NINA's Center and Rotate refuses to start without a rotator; since 766ab4a the planner uses Center instead.)
+
+- **Row numbers follow the list:** a target added and moved to the top showed "1000" and the others kept their old numbers (WPF's alternation index is not renumbered on a move). Targets and exposure rows are now numbered by their position.
+
+- **Why a higher target was passed over:** when the planner starts (or waits for) a target, the log now says why each checked target above it in the list is not the one chosen, e.g. "IC 443 Panel 1 is not started: it is at 39.2° and starts at 40° altitude; opens at 01:42". (On the rig Panel 2 started before Panel 1 because Panel 1 is further east and reached 40° five minutes later.)
+
+- **No stale pause after a restart:** Start sequence after a pause left "paused" saved until the run ended, and a Run forever run never ends; closing NINA later (e.g. to update the plugin) brought the planner back paused at the next start. The saved pause is now cleared as soon as the run continues.
+
+- **Device recovery (new, Options > Device recovery, on by default):** when the devices that stay connected (safety monitor, switch, dome, weather) drop - e.g. their Alpaca server stops answering and NINA disconnects them after one failed try (the rig on 24 Oct at 06:58) - the planner reconnects them every minute while the run waits, is closed up or is paused, and right away before closing the roof, opening it again or running 4 End. Each drop and return is logged once; a device still missing after 15 min shows a warning in the panel. A missing safety monitor still counts as unsafe. While the planner is stopped nothing is reconnected; the panel only lists what is not connected.
+
+- **No daytime "opens at":** the "is not started" log line no longer gives a time in daylight (with the Night setting off); it says the target does not open again tonight.
+
 ## 1.0.0.0
 
 First release, for N.I.N.A. 3.2.0.9001 and later.

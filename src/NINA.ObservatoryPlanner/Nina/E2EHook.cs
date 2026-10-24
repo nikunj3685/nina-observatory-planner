@@ -150,6 +150,8 @@ namespace NINA.ObservatoryPlanner.Nina {
                             }
                             if (cmd == "move target 2 first" && planner.Targets.Count > 1) { planner.Targets.Move(1, 0); }
                             if (cmd == "disconnect camera") { _ = planner.Nina.Camera.Disconnect(); }
+                            // as NINA does when an Alpaca server stops answering: it disconnects the devices and gives up
+                            if (cmd == "disconnect kept devices") { _ = planner.Nina.SafetyMonitor.Disconnect(); _ = planner.Nina.Dome.Disconnect(); }
                             if (cmd == "slew away") {
                                 var info = planner.Nina.Telescope.GetInfo();
                                 var c = info.Coordinates;
