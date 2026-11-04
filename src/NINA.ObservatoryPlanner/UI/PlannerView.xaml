@@ -849,6 +849,12 @@
                                                             <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding RotateAfWarning, StringFormat=⚠ {0}}" />
                                                         </DockPanel>
                                                     </Border>
+                                                    <Border Style="{StaticResource OP_WarnBox}" Tag="OP_Warn" Visibility="{Binding Stage2Warning, Converter={StaticResource OP_TextVisible}}">
+                                                        <DockPanel>
+                                                            <Button Margin="8,0,0,0" Padding="2,0" VerticalAlignment="Top" Command="{Binding DismissWarningCommand}" CommandParameter="{Binding Stage2Warning}" Content="✕" DockPanel.Dock="Right" Style="{StaticResource OP_Flat}" ToolTip="Close this message" />
+                                                            <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding Stage2Warning, StringFormat=⚠ {0}}" />
+                                                        </DockPanel>
+                                                    </Border>
                                                     <Border Style="{StaticResource OP_WarnBox}" Tag="OP_Warn" Visibility="{Binding ManualFilterWarning, Converter={StaticResource OP_TextVisible}}">
                                                         <DockPanel>
                                                             <Button Margin="8,0,0,0" Padding="2,0" VerticalAlignment="Top" Command="{Binding DismissWarningCommand}" CommandParameter="{Binding ManualFilterWarning}" Content="✕" DockPanel.Dock="Right" Style="{StaticResource OP_Flat}" ToolTip="Close this message" />
@@ -1084,6 +1090,17 @@
                                                                                     <TextBlock FontSize="11" Opacity="0.6" Style="{StaticResource OP_Mono}" Text="{Binding Number}" />
                                                                                     <TextBlock Grid.Column="1" Margin="0,0,8,0" local:TrimTip.Enabled="True" FontSize="11" Opacity="0.6" Style="{StaticResource OP_Mono}" Text="{Binding Category}" TextTrimming="CharacterEllipsis" />
                                                                                     <TextBlock Grid.Column="2" FontSize="13" TextWrapping="Wrap">
+                                                                                        <TextBlock.Style>
+                                                                                            <Style TargetType="TextBlock">
+                                                                                                <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}" />
+                                                                                                <Style.Triggers>
+                                                                                                    <DataTrigger Binding="{Binding Disabled}" Value="True">
+                                                                                                        <Setter Property="Opacity" Value="0.45" />
+                                                                                                        <Setter Property="TextDecorations" Value="Strikethrough" />
+                                                                                                    </DataTrigger>
+                                                                                                </Style.Triggers>
+                                                                                            </Style>
+                                                                                        </TextBlock.Style>
                                                                                         <Run Text="{Binding Name, Mode=OneWay}" /><Run Foreground="{StaticResource OP_Muted}" Text="{Binding SummaryText, Mode=OneWay}" />
                                                                                     </TextBlock>
                                                                                 </Grid>
@@ -1158,6 +1175,22 @@
                                             <TextBlock Text="Autofocus before the first frame after 1 Begin, and after a weather close-up" TextWrapping="Wrap" />
                                         </CheckBox>
                                         <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="1 Begin runs after the equipment was off (the start of the night, after clouds), so the focus is found again before the first light frame, once the target is centred and guiding. Filter changes are handled by &quot;AF after filter change (planner)&quot; in 3 While imaging." />
+                                        <TextBlock Margin="0,12,0,0" FontWeight="SemiBold" Text="Stage 2 (start of each target) handled by" />
+                                        <local:AutoColumnsPanel Margin="0,6,0,0">
+                                            <RadioButton Margin="0,0,8,0" GroupName="OP_Stage2" IsChecked="{Binding PlannerHandlesStage2, Mode=TwoWay}" Style="{StaticResource OP_Card}">
+                                                <StackPanel>
+                                                    <TextBlock FontWeight="SemiBold" Text="Planner" />
+                                                    <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="Each target's own settings: slew and center, slew only or do not move, and Start guiding. Center and Start Guiding steps in stage 2 are ignored." />
+                                                </StackPanel>
+                                            </RadioButton>
+                                            <RadioButton Margin="0" GroupName="OP_Stage2" IsChecked="{Binding SequencerHandlesStage2, Mode=TwoWay}" Style="{StaticResource OP_Card}">
+                                                <StackPanel>
+                                                    <TextBlock FontWeight="SemiBold" Text="Advanced Sequencer" />
+                                                    <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="Stage 2 runs as you built it, so it needs its own Center and Start Guiding steps. The target settings are greyed out." />
+                                                </StackPanel>
+                                            </RadioButton>
+                                        </local:AutoColumnsPanel>
+                                        <TextBlock Margin="0,8,0,0" Style="{StaticResource OP_Hint}" Text="Darks, bias and flats (a target whose ticked rows are all calibration frames) skip stages 2 and 3 in both modes: no slew, no guiding, no triggers." />
                                     </StackPanel>
                                 </Expander>
 

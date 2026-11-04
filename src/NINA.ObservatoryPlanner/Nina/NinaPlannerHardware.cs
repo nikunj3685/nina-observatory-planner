@@ -116,6 +116,10 @@ namespace NINA.ObservatoryPlanner.Nina {
                 stage.ResetAll();
                 foreach (var item in stage.GetItemsSnapshot().Take(done).Where(i => i.Status == SequenceEntityStatus.CREATED)) { item.Status = SequenceEntityStatus.FINISHED; }
             });
+            // NINA's container skips switched-off stages and instructions; the log says what it will leave out
+            var off = stage.Status == SequenceEntityStatus.DISABLED ? new List<string> { "the whole stage" }
+                : Descendants(stage).Where(i => i.Status == SequenceEntityStatus.DISABLED).Select(i => i.Name).ToList();
+            if (off.Count > 0) { planner.Log.Info($"{PlannerStageContainer.Title(kind)}: switched off in the Advanced Sequencer, so it does not run: {string.Join(", ", off)}"); }
             if (kind == StageKind.End) {
                 planner.SetEndProblems(null);
                 planner.OnEndStarting();
@@ -186,6 +190,9 @@ namespace NINA.ObservatoryPlanner.Nina {
             }
         }
 
+        public Task<bool> ResumeAfterGap(IReadOnlyList<GapStep> steps, CancellationToken token) =>
+            RunWeatherSteps("Between targets", steps, new HashSet<GapStep> { GapStep.OpenDome, GapStep.Unpark }, token);
+
         private bool DomeConnected() => planner.Nina.Dome.GetInfo()?.Connected == true;
 
         /// <summary>Runs the steps; false when one of <paramref name="mustWork"/> failed.</summary>
@@ -213,7 +220,12 @@ namespace NINA.ObservatoryPlanner.Nina {
                     if (planner.Nina.Telescope.GetInfo()?.AtPark == true) { await RunStandalone(F.Unpark(), t, protect: true); }
                     return planner.Nina.Telescope.GetInfo()?.AtPark != true;
                 },
-                (d, t) => Task.Delay(d, t), m => planner.Log.Info(m));
+                (d, t) => Task.Delay(d, t), m => planner.Log.Info(m),
+                async t => {
+                    var exe = AscomDriverProgram.ExeFor(planner.Nina.Profile.ActiveProfile.TelescopeSettings.Id);
+                    if (exe == null) { return false; } // a driver inside NINA, or an Alpaca mount: nothing to restart
+                    return await AscomDriverProgram.Close(exe, TimeSpan.FromSeconds(15), t);
+                });
             var ok = await recovery.Run(planner.Options.MountRecoveryTries, token);
             planner.MountPositionUnknown = !ok;
             if (!ok) { planner.AddEndProblem(PlannerEngine.RecoveryFailed); }
@@ -299,41 +311,75 @@ namespace NINA.ObservatoryPlanner.Nina {
             return items;
         }
 
-        private static bool IsMove(ISequenceItem i) => i is Center || i is SlewScopeToRaDec; // CenterAndRotate derives from Center
-
         public async Task<int> RunTarget(PlannerTarget target, Func<PlannerExposure, bool> canStartFrame, CancellationToken token) {
             planner.ImagingTargetId = null;
             var dso = F.TargetContainer(target);
 
-            // 2 Start of target, adapted to this target: its "When target starts" choice replaces the stage's move step.
-            var stageItems = container.Stage(StageKind.TargetStart)?.Items.ToList() ?? new List<ISequenceItem>();
+            // 2 Start of target, adapted to this target. Handled by the planner (⚙ Options › Run mode): the target's own settings
+            // give the move and the guiding, and the stage's Slew/Center and Start Guiding steps are left out. Handled by the Advanced
+            // Sequencer: the stage runs as it was built. A switched-off stage or instruction is left out, as NINA would skip it, and
+            // a calibration target (darks, bias, flats) leaves out the whole stage.
+            var byPlanner = planner.Options.Stage2Handler == Stage2Handler.Planner;
+            var calibration = target.IsCalibrationOnly;
+            var stage = container.Stage(StageKind.TargetStart);
+            var stageOff = stage != null && stage.Status == SequenceEntityStatus.DISABLED;
+            var skip = calibration || stageOff;
+            var stageItems = stage?.Items.ToList() ?? new List<ISequenceItem>();
             // a flat panel cover closed by 4 End (or flats) is opened first: slewing, plate solving and light frames need the sky
             dso.Add(new PlannerOpenPanel(planner.Nina.FlatDevice, planner.Log));
             var moved = false;
+            var added = new List<string>();
+            var left = new List<string>();
+            var replaced = new List<string>();
             foreach (var item in stageItems) {
-                if (IsMove(item)) {
+                if (skip) { left.Add(item.Name); continue; }
+                var typeName = item.GetType().Name;
+                if (byPlanner && StageChecks.IsGuiding(typeName)) { replaced.Add(item.Name); continue; }
+                if (byPlanner && StageChecks.IsMove(typeName)) {
+                    replaced.Add(item.Name);
                     if (!moved) {
-                        foreach (var move in MoveItems(target)) { move.Attempts = item.Attempts; move.ErrorBehavior = item.ErrorBehavior; dso.Add(move); }
+                        foreach (var move in MoveItems(target)) { move.Attempts = item.Attempts; move.ErrorBehavior = item.ErrorBehavior; dso.Add(move); added.Add(move.Name); }
                         moved = true;
                     }
                     continue;
                 }
+                if (item.Status == SequenceEntityStatus.DISABLED) { left.Add(item.Name); continue; }
                 dso.Add((ISequenceItem)item.Clone());
+                added.Add(item.Name);
             }
-            if (!moved) {
-                var moves = MoveItems(target);
-                for (var i = 0; i < moves.Count; i++) { dso.InsertIntoSequenceBlocks(1 + i, moves[i]); }
+            if (byPlanner && !skip) {
+                if (!moved) {
+                    var moves = MoveItems(target);
+                    for (var i = 0; i < moves.Count; i++) { dso.InsertIntoSequenceBlocks(1 + i, moves[i]); added.Add(moves[i].Name); }
+                }
+                if (!target.GuideOnStart) { /* guiding is off for this target */ }
+                else if (planner.Nina.Guider.GetInfo()?.Connected != true) { planner.Log.Info($"{target.Name}: guiding skipped: no guider is connected"); }
+                else { var guide = F.StartGuiding(forceCalibration: true); dso.Add(guide); added.Add(guide.Name); }
             }
+            var how = calibration ? "calibration target: stages 2 and 3 skipped (no slew, no guiding)"
+                : stageOff ? "the stage is switched off: nothing runs"
+                : byPlanner ? $"handled by the planner; when the target starts: {target.OnStart}, guiding: {(target.GuideOnStart ? "on" : "off")}"
+                : "handled by the Advanced Sequencer";
+            planner.Log.Info($"{target.Name}: 2 Start of target, {how}"
+                + $"; steps: {(added.Count == 0 ? "none" : string.Join(", ", added))}"
+                + (replaced.Count == 0 ? "" : $"; replaced by the planner's own: {string.Join(", ", replaced)}")
+                + (left.Count == 0 ? "" : $"; left out: {string.Join(", ", left)}"));
             return await RunImaging(dso, target, canStartFrame, token);
         }
 
-        /// <summary>Resume on the same target, mount where it was: no slew or centering, just tracking on and guiding restarted.</summary>
+        /// <summary>
+        /// Resume on the same target, mount where it was: no slew or centering, just tracking on and guiding restarted.
+        /// Handled by the planner, guiding follows the target's setting; a calibration target neither tracks nor guides.
+        /// </summary>
         public async Task<int> ResumeTarget(PlannerTarget target, Func<PlannerExposure, bool> canStartFrame, CancellationToken token) {
             planner.ImagingTargetId = null;
             var dso = F.TargetContainer(target);
             dso.Add(new PlannerOpenPanel(planner.Nina.FlatDevice, planner.Log));
-            dso.Add(F.SetTracking(TrackingMode.Sidereal));
-            if (planner.Nina.Guider.GetInfo()?.Connected == true) { dso.Add(F.StartGuiding(forceCalibration: false)); }
+            if (!target.IsCalibrationOnly) {
+                dso.Add(F.SetTracking(TrackingMode.Sidereal));
+                var guide = planner.Options.Stage2Handler != Stage2Handler.Planner || target.GuideOnStart;
+                if (guide && planner.Nina.Guider.GetInfo()?.Connected == true) { dso.Add(F.StartGuiding(forceCalibration: false)); }
+            }
             return await RunImaging(dso, target, canStartFrame, token);
         }
 
@@ -342,8 +388,16 @@ namespace NINA.ObservatoryPlanner.Nina {
 
             var run = new PlannerImagingRun(planner, target, canStartFrame);
             imagingRun = run;
-            foreach (var trigger in container.Stage(StageKind.Triggers)?.Triggers.ToList() ?? new List<ISequenceTrigger>()) {
-                run.Add((ISequenceTrigger)trigger.Clone());
+            var triggerStage = container.Stage(StageKind.Triggers);
+            if (target.IsCalibrationOnly) {
+                planner.Log.Info($"{target.Name}: 3 While imaging skipped: calibration target, no triggers");
+            } else if (triggerStage != null && triggerStage.Status == SequenceEntityStatus.DISABLED) {
+                planner.Log.Info($"{target.Name}: 3 While imaging is switched off: no triggers");
+            } else {
+                foreach (var trigger in triggerStage?.Triggers.ToList() ?? new List<ISequenceTrigger>()) {
+                    if (trigger.Status == SequenceEntityStatus.DISABLED) { planner.Log.Info($"{target.Name}: trigger {trigger.Name} is switched off"); continue; }
+                    run.Add((ISequenceTrigger)trigger.Clone());
+                }
             }
             dso.Add(run);
 

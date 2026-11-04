@@ -1,4 +1,6 @@
+using NINA.Core.Enum;
 using NINA.Sequencer.Container;
+using NINA.Sequencer.Trigger;
 using NINA.Sequencer.Utility;
 using System;
 using System.Collections.Generic;
@@ -39,10 +41,80 @@ namespace NINA.ObservatoryPlanner.Nina {
             var root = CurrentRoot() ?? throw new InvalidOperationException("No Observatory Planner workflow is loaded in the Advanced Sequencer.");
             var json = Serialize(root);
             if (json != null) { Core.PlannerStore.WriteText(PathFor(name), json); lastSaved = json; } else { await planner.Nina.Sequence.SaveContainer(root, PathFor(name), CancellationToken.None); }
+            if (json != null) { lastDisabled = WriteDisabled(PathFor(name), json, DisabledPaths(root)); }
             planner.Options.WorkflowName = name;
         }
 
         private string lastSaved;
+        private string lastDisabled;
+
+        // ---------- steps switched off in the Advanced Sequencer ----------
+        // NINA's sequence file does not keep "disabled" (an instruction's status is not saved), so a restart would switch every step
+        // back on. The planner keeps the list itself, next to the workflow file, and applies it when the workflow is opened.
+
+        /// <summary>Where the disabled list of a workflow file is kept (not a .json, so it is not listed as a workflow).</summary>
+        internal static string DisabledFileFor(string workflowPath) => workflowPath + ".disabled";
+
+        /// <summary>Positions of the switched-off instructions and triggers: "i3" is the 4th item, "i3/i0" its first child, "i3/t1" its 2nd trigger.</summary>
+        internal static List<string> DisabledPaths(ISequenceContainer c, string prefix = "") {
+            var found = new List<string>();
+            var items = c.GetItemsSnapshot().ToList();
+            for (var k = 0; k < items.Count; k++) {
+                var path = prefix + "i" + k;
+                if (items[k].Status == SequenceEntityStatus.DISABLED) { found.Add(path); }
+                if (items[k] is ISequenceContainer sub) { found.AddRange(DisabledPaths(sub, path + "/")); }
+            }
+            if (c is ITriggerable triggers) {
+                var list = triggers.GetTriggersSnapshot().ToList();
+                for (var k = 0; k < list.Count; k++) {
+                    if (list[k].Status == SequenceEntityStatus.DISABLED) { found.Add(prefix + "t" + k); }
+                }
+            }
+            return found;
+        }
+
+        /// <summary>Switches off the instructions and triggers at these positions.</summary>
+        internal static void ApplyDisabled(ISequenceContainer c, ISet<string> paths, string prefix = "") {
+            var items = c.GetItemsSnapshot().ToList();
+            for (var k = 0; k < items.Count; k++) {
+                var path = prefix + "i" + k;
+                if (paths.Contains(path)) { items[k].Status = SequenceEntityStatus.DISABLED; }
+                if (items[k] is ISequenceContainer sub) { ApplyDisabled(sub, paths, path + "/"); }
+            }
+            if (c is ITriggerable triggers) {
+                var list = triggers.GetTriggersSnapshot().ToList();
+                for (var k = 0; k < list.Count; k++) {
+                    if (paths.Contains(prefix + "t" + k)) { list[k].Status = SequenceEntityStatus.DISABLED; }
+                }
+            }
+        }
+
+        internal static string HashOf(string json) =>
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json)))[..16];
+
+        /// <summary>Writes the disabled list next to the workflow file (removes it when nothing is switched off). Returns the list as text.</summary>
+        internal static string WriteDisabled(string workflowPath, string workflowJson, IReadOnlyList<string> paths) {
+            var file = DisabledFileFor(workflowPath);
+            var text = string.Join(",", paths);
+            if (paths.Count == 0) {
+                try { if (File.Exists(file)) { File.Delete(file); } } catch (IOException) { }
+                return text;
+            }
+            // the hash ties the list to this exact workflow file: a file changed by anything else gets no stale list
+            Core.PlannerStore.WriteText(file, Newtonsoft.Json.JsonConvert.SerializeObject(new { Hash = HashOf(workflowJson), Disabled = paths }, Newtonsoft.Json.Formatting.Indented));
+            return text;
+        }
+
+        /// <summary>The saved disabled list of a workflow file, or an empty set when there is none or the workflow file has changed since.</summary>
+        internal static HashSet<string> ReadDisabled(string workflowPath, string workflowJson) {
+            var file = DisabledFileFor(workflowPath);
+            try {
+                if (!File.Exists(file)) { return new HashSet<string>(); }
+                var saved = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(file));
+                if ((string)saved["Hash"] != HashOf(workflowJson)) { return new HashSet<string>(); }
+                return saved["Disabled"]?.Select(t => (string)t).Where(s => s != null).ToHashSet() ?? new HashSet<string>();
+            } catch (Exception) { return new HashSet<string>(); }
+        }
 
         /// <summary>The sequence as NINA's own sequence file, or null when NINA's converter can't be reached.</summary>
         public string Serialize(ISequenceRootContainer root) {
@@ -59,18 +131,23 @@ namespace NINA.ObservatoryPlanner.Nina {
             var root = CurrentRoot();
             if (root == null) { return false; }
             var json = Serialize(root);
-            if (json == null || json == lastSaved) { return false; }
+            if (json == null) { return false; }
+            var disabled = DisabledPaths(root);
+            var disabledText = string.Join(",", disabled);
+            if (json == lastSaved && disabledText == lastDisabled) { return false; }
             var name = planner.Options.WorkflowName ?? "Autosaved workflow";
             var path = PathFor(name);
-            if (lastSaved == null && File.Exists(path) && File.ReadAllText(path) == json) { lastSaved = json; return false; }
-            Core.PlannerStore.WriteText(path, json);
+            var sameFile = json == lastSaved || (lastSaved == null && File.Exists(path) && File.ReadAllText(path) == json);
+            if (!sameFile) { Core.PlannerStore.WriteText(path, json); }
+            var wrote = !sameFile || disabledText != lastDisabled;
+            lastDisabled = WriteDisabled(path, json, disabled);
             lastSaved = json;
             if (planner.Options.WorkflowName == null) { planner.Options.WorkflowName = name; }
-            return true;
+            return wrote;
         }
 
         /// <summary>Forget what was saved last (after switching profile).</summary>
-        public void Reset() => lastSaved = null;
+        public void Reset() { lastSaved = null; lastDisabled = null; }
 
         /// <summary>
         /// Opens a sequence file into the Advanced Sequencer with NINA's own sequence converter. NINA 3.2 does not
@@ -84,9 +161,14 @@ namespace NINA.ObservatoryPlanner.Nina {
             if (container is not ISequenceRootContainer root) {
                 throw new InvalidDataException("The file is not a complete N.I.N.A. sequence.");
             }
+            var text = File.ReadAllText(path);
+            var disabled = ReadDisabled(path, text);
+            if (disabled.Count > 0) { ApplyDisabled(root, disabled); }
             planner.Nina.Sequence.SetAdvancedSequence(root);
             planner.Options.WorkflowName = Path.GetFileNameWithoutExtension(path);
-            lastSaved = File.ReadAllText(path);
+            lastSaved = text;
+            lastDisabled = string.Join(",", DisabledPaths(root));
+            if (disabled.Count > 0) { planner.Log.Info($"Workflow opened: {disabled.Count} step{(disabled.Count == 1 ? "" : "s")} stay switched off, as saved"); }
             return true;
         }
 

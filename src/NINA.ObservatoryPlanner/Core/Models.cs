@@ -9,6 +9,14 @@ using System.Runtime.CompilerServices;
 namespace NINA.ObservatoryPlanner.Core {
 
     public enum OnStartAction { SlewAndCenter, SlewOnly, DoNotMove }
+
+    /// <summary>Who handles the move and the guiding at the start of each target.</summary>
+    public enum Stage2Handler {
+        /// <summary>The planner, from each target's own settings; stage 2's own Slew/Center and Start Guiding steps are left out.</summary>
+        Planner,
+        /// <summary>Stage 2 of the Advanced Sequencer runs as it was built; the planner adds no move or guiding.</summary>
+        AdvancedSequencer
+    }
     public enum ConstraintBy { Altitude, Time }
     public enum ExposureOrder { RotateThroughFilters, FinishEachRowFirst }
     public enum RunMode { WithSafety, WithoutSafety }
@@ -111,6 +119,7 @@ namespace NINA.ObservatoryPlanner.Core {
         private double raHours;
         private double decDegrees;
         private OnStartAction onStart = OnStartAction.SlewAndCenter;
+        private bool guideOnStart = true;
         private bool rotate;
         private double positionAngle;
         private ExposureOrder order = ExposureOrder.FinishEachRowFirst;
@@ -130,6 +139,8 @@ namespace NINA.ObservatoryPlanner.Core {
         /// <summary>J2000 declination in degrees</summary>
         [JsonProperty] public double DecDegrees { get => decDegrees; set => Set(ref decDegrees, Math.Max(-90, Math.Min(90, value))); }
         [JsonProperty] public OnStartAction OnStart { get => onStart; set => Set(ref onStart, value); }
+        /// <summary>Start guiding when the target starts (only when the planner handles stage 2; lists saved before this load as on).</summary>
+        [JsonProperty] public bool GuideOnStart { get => guideOnStart; set => Set(ref guideOnStart, value); }
         [JsonProperty] public bool Rotate { get => rotate; set => Set(ref rotate, value); }
         [JsonProperty] public double PositionAngle { get => positionAngle; set => Set(ref positionAngle, ((value % 360) + 360) % 360); }
         [JsonProperty] public TimeConstraint Start { get; set; } = new TimeConstraint();
@@ -158,6 +169,11 @@ namespace NINA.ObservatoryPlanner.Core {
         public int TotalFrames => Exposures.Where(e => e.Enabled).Sum(e => e.Count);
         public int DoneFrames => Exposures.Where(e => e.Enabled).Sum(e => Math.Min(e.Done, e.Count));
         public bool IsComplete => TotalFrames > 0 && DoneFrames >= TotalFrames;
+        /// <summary>
+        /// At least one row is ticked and every ticked row is a dark, bias or flat: such a target needs no slew, guiding or imaging
+        /// triggers, so stages 2 and 3 are skipped for it. Decided each time the target starts.
+        /// </summary>
+        public bool IsCalibrationOnly => Exposures.Any(e => e.Enabled) && Exposures.Where(e => e.Enabled).All(e => e.Type != ExposureType.Light);
         public double Percent => TotalFrames == 0 ? 0 : Math.Round(100.0 * DoneFrames / TotalFrames);
         /// <summary>Remaining imaging time in hours, including the delay between exposures.</summary>
         public double HoursRemaining => Exposures.Where(e => e.Enabled).Sum(e => e.Remaining * (e.ExposureTime + DelayBetween)) / 3600.0;
@@ -175,7 +191,7 @@ namespace NINA.ObservatoryPlanner.Core {
         }
 
         public PlannerTarget Clone(bool keepProgress) => new PlannerTarget {
-            Enabled = Enabled, Name = Name, RaHours = RaHours, DecDegrees = DecDegrees, OnStart = OnStart, Rotate = Rotate,
+            Enabled = Enabled, Name = Name, RaHours = RaHours, DecDegrees = DecDegrees, OnStart = OnStart, GuideOnStart = GuideOnStart, Rotate = Rotate,
             PositionAngle = PositionAngle, Start = Start.Clone(), End = End.Clone(), Order = Order, DelayFirst = DelayFirst,
             DelayBetween = DelayBetween, Exposures = new ObservableCollection<PlannerExposure>(Exposures.Select(e => e.Clone(keepProgress)))
         };
@@ -212,6 +228,7 @@ namespace NINA.ObservatoryPlanner.Core {
         private int safeDelaySeconds;
         private bool autoStartOnLaunch;
         private bool autofocusAfterBegin = true;
+        private Stage2Handler stage2Handler = Stage2Handler.Planner;
         private bool guideLostWatch = true;
         private int guideLostWaitSeconds = 60;
         private GuideLostAction guideLostAction = GuideLostAction.StopForNight;
@@ -262,6 +279,8 @@ namespace NINA.ObservatoryPlanner.Core {
         [JsonProperty] public bool AutoStartOnLaunch { get => autoStartOnLaunch; set => Set(ref autoStartOnLaunch, value); }
         /// <summary>After every 1 Begin (the equipment was off), autofocus before the first light frame.</summary>
         [JsonProperty] public bool AutofocusAfterBegin { get => autofocusAfterBegin; set => Set(ref autofocusAfterBegin, value); }
+        /// <summary>Who moves to the target and starts guiding at the start of each target: the planner (from the target's settings) or stage 2.</summary>
+        [JsonProperty] public Stage2Handler Stage2Handler { get => stage2Handler; set => Set(ref stage2Handler, value); }
         /// <summary>Watch the guider during light frames and act when the guide star is lost.</summary>
         [JsonProperty] public bool GuideLostWatch { get => guideLostWatch; set => Set(ref guideLostWatch, value); }
         /// <summary>How long to wait for the guider to find the star again, counted from when it was lost.</summary>
@@ -294,6 +313,7 @@ namespace NINA.ObservatoryPlanner.Core {
             MountRecovery = o.MountRecovery; MountRecoveryTries = o.MountRecoveryTries; CloseRoofWhenRecoveryFails = o.CloseRoofWhenRecoveryFails;
             DeviceRecovery = o.DeviceRecovery; DeviceRecoveryMinutes = o.DeviceRecoveryMinutes; DeviceMissingWarnMinutes = o.DeviceMissingWarnMinutes;
             SafeDelaySeconds = o.SafeDelaySeconds; AutoStartOnLaunch = o.AutoStartOnLaunch; AutofocusAfterBegin = o.AutofocusAfterBegin;
+            Stage2Handler = o.Stage2Handler;
             GuideLostWatch = o.GuideLostWatch; GuideLostWaitSeconds = o.GuideLostWaitSeconds; GuideLostAction = o.GuideLostAction;
             GuidingCheck = o.GuidingCheck; GuidingLimitPixels = o.GuidingLimitPixels; GuidingCheckWaitSeconds = o.GuidingCheckWaitSeconds;
             CloseGuiderAppOnDisconnect = o.CloseGuiderAppOnDisconnect; CloseMountAppOnDisconnect = o.CloseMountAppOnDisconnect;

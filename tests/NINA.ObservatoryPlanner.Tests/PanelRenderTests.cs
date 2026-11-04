@@ -127,6 +127,58 @@ namespace NINA.ObservatoryPlanner.Tests {
             }
         }
 
+        /// <summary>The Options tab with only the section <c>OP_RENDER_SECTION</c> (default DEVICE RECOVERY) opened.</summary>
+        [Test]
+        public void Render_an_options_section() {
+            var folder = Environment.GetEnvironmentVariable("OP_RENDER_DIR") ?? Path.Combine(Path.GetTempPath(), "op-render");
+            var section = Environment.GetEnvironmentVariable("OP_RENDER_SECTION") ?? "DEVICE RECOVERY";
+            Directory.CreateDirectory(folder);
+            var root = Path.Combine(Path.GetTempPath(), "op-render-" + Guid.NewGuid().ToString("N"));
+            var app = Application.Current ?? new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            Theme(app.Resources);
+            try {
+                var planner = new PlannerService(null, root);
+                planner.Options.PanelTextSize = 12;
+                planner.Targets.Add(planner.NewTarget("Barnard 175"));
+                var vm = new PlannerDockableVM(new Mock<IProfileService>().Object, planner) { SelectedPlannerTab = 2 };
+                var template = (DataTemplate)new PlannerView()["NINA.ObservatoryPlanner.UI.PlannerDockableVM_Dockable"];
+                var content = new ContentControl { Content = vm, ContentTemplate = template };
+                var w = new Window {
+                    Content = content, Width = 560, Height = 1300, ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000,
+                    Background = (Brush)Application.Current.Resources["BackgroundBrush"]
+                };
+                w.Show();
+                w.UpdateLayout();
+                foreach (var e in FindAll<Expander>(content)) {
+                    e.IsExpanded = e.Header is TextBlock t && t.Text == section;
+                }
+                w.UpdateLayout();
+                var path = Path.Combine(folder, "options-" + section.ToLowerInvariant().Replace(' ', '-').Replace("(", "").Replace(")", "") + ".png");
+                var bitmap = new RenderTargetBitmap((int)content.ActualWidth, (int)content.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+                var visual = new DrawingVisual();
+                using (var dc = visual.RenderOpen()) {
+                    dc.DrawRectangle((Brush)Application.Current.Resources["BackgroundBrush"], null, new Rect(0, 0, content.ActualWidth, content.ActualHeight));
+                    dc.DrawRectangle(new VisualBrush(content), null, new Rect(0, 0, content.ActualWidth, content.ActualHeight));
+                }
+                bitmap.Render(visual);
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                using (var file = File.Create(path)) { encoder.Save(file); }
+                w.Close();
+                TestContext.WriteLine(path);
+            } finally {
+                try { Directory.Delete(root, true); } catch (IOException) { }
+            }
+        }
+
+        private static System.Collections.Generic.IEnumerable<T> FindAll<T>(DependencyObject d) where T : DependencyObject {
+            for (var i = 0; i < VisualTreeHelper.GetChildrenCount(d); i++) {
+                var c = VisualTreeHelper.GetChild(d, i);
+                if (c is T t) { yield return t; }
+                foreach (var r in FindAll<T>(c)) { yield return r; }
+            }
+        }
+
         private static string RepoRoot() {
             var d = new DirectoryInfo(TestContext.CurrentContext.TestDirectory);
             while (d != null && !File.Exists(Path.Combine(d.FullName, "NINA.ObservatoryPlanner.slnx"))) { d = d.Parent; }

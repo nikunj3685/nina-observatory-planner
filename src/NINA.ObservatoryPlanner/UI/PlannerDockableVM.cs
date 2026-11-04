@@ -20,8 +20,8 @@ using System.Windows.Threading;
 namespace NINA.ObservatoryPlanner.UI {
 
     /// <summary>One instruction in a stage box: number, category, name and a summary of its settings.</summary>
-    public sealed record StageLine(int Number, string Category, string Name, string Summary) {
-        public string SummaryText => string.IsNullOrEmpty(Summary) ? "" : "  · " + Summary;
+    public sealed record StageLine(int Number, string Category, string Name, string Summary, bool Disabled = false) {
+        public string SummaryText => (Disabled ? "  · disabled" : "") + (string.IsNullOrEmpty(Summary) ? "" : "  · " + Summary);
     }
 
     public class StageView : Observable {
@@ -32,12 +32,21 @@ namespace NINA.ObservatoryPlanner.UI {
         private string emptyText;
         public int Number { get; init; }
         public Brush Brush { get; init; }
+        private bool switchedOff;
+        /// <summary>The whole stage is switched off in the Advanced Sequencer: nothing in it runs.</summary>
+        public bool SwitchedOff { get => switchedOff; set { if (Set(ref switchedOff, value)) { Raise(nameof(CountText)); } } }
         public string Title { get => title; set => Set(ref title, value); }
         public string Hint { get => hint; set => Set(ref hint, value); }
         public string EmptyText { get => emptyText; set => Set(ref emptyText, value); }
         public IReadOnlyList<StageLine> Lines { get => lines; set { if (!lines.SequenceEqual(value)) { lines = value; Raise(); Raise(nameof(CountText)); } } }
         /// <summary>Shown in the heading, also while the stage is collapsed: "8 steps" or "2 triggers".</summary>
-        public string CountText => Number == 3 ? $"{lines.Count} trigger{(lines.Count == 1 ? "" : "s")}" : $"{lines.Count} step{(lines.Count == 1 ? "" : "s")}";
+        public string CountText {
+            get {
+                var off = lines.Count(l => l.Disabled);
+                var text = Number == 3 ? $"{lines.Count} trigger{(lines.Count == 1 ? "" : "s")}" : $"{lines.Count} step{(lines.Count == 1 ? "" : "s")}";
+                return SwitchedOff ? text + " · switched off" : off > 0 ? text + $" · {off} disabled" : text;
+            }
+        }
         public IReadOnlyList<string> Warnings { get => warnings; set { if (!warnings.SequenceEqual(value)) { warnings = value; Raise(); } } }
     }
 
@@ -192,7 +201,7 @@ namespace NINA.ObservatoryPlanner.UI {
 
         /// <summary>The tab shown has a warning (not closed): a red ⚠ in front of the status text jumps to it.</summary>
         public bool TabHasWarnings => SelectedPlannerTab switch {
-            0 => !string.IsNullOrEmpty(RotateAfWarning) || !string.IsNullOrEmpty(ManualFilterWarning),
+            0 => !string.IsNullOrEmpty(RotateAfWarning) || !string.IsNullOrEmpty(ManualFilterWarning) || !string.IsNullOrEmpty(Stage2Warning),
             1 => Stages.Any(s => s.Warnings.Count > 0),
             3 => NoSafetyWarningShown,
             _ => false
@@ -410,10 +419,13 @@ namespace NINA.ObservatoryPlanner.UI {
                 var t = SelectedTarget;
                 if (t == null) { return Array.Empty<string>(); }
                 var chips = new List<string> {
-                    t.OnStart switch { OnStartAction.SlewAndCenter => "Slew and center", OnStartAction.SlewOnly => "Slew only", _ => "Stays where it is" },
+                    t.IsCalibrationOnly ? "Calibration: no slew, no guiding"
+                        : Options.Stage2Handler == Stage2Handler.AdvancedSequencer ? "Stage 2 in the sequencer"
+                        : t.OnStart switch { OnStartAction.SlewAndCenter => "Slew and center", OnStartAction.SlewOnly => "Slew only", _ => "Stays where it is" },
                     t.Start.Enabled ? "starts at " + Constraint(t.Start) : WithSafety ? "starts when safe" : "starts when dark",
                     t.End.Enabled ? "ends at " + Constraint(t.End) : WithSafety ? "runs until unsafe" : "runs until dawn"
                 };
+                if (!t.IsCalibrationOnly && Options.Stage2Handler == Stage2Handler.Planner) { chips.Add(t.GuideOnStart ? "guided" : "not guided"); }
                 // without a rotator in NINA's profile the rotation is not used: 2 Start of target only slews and centers
                 if (t.Rotate) { chips.Add(planner.HasRotator ? $"Rotate {t.PositionAngle:0.#}°" : $"Rotate {t.PositionAngle:0.#}° · no rotator"); }
                 return chips;
@@ -425,6 +437,10 @@ namespace NINA.ObservatoryPlanner.UI {
         public string RemainingText => SelectedTarget == null ? "" : $"{SelectedTarget.DoneFrames} of {SelectedTarget.TotalFrames} frames · {SelectedTarget.HoursRemaining:0.0} h remaining";
 
         public string RotateAfWarning { get => rotateAfWarning; private set { rotateAfWarning = value; RaisePropertyChanged(); RaisePropertyChanged(nameof(TabHasWarnings)); } }
+
+        private string stage2Warning;
+        /// <summary>Stage 2 against "Stage 2 handled by" (ignored Center / Start Guiding steps, or nothing that moves or guides), as on the Targets tab.</summary>
+        public string Stage2Warning { get => stage2Warning; private set { if (stage2Warning == value) { return; } stage2Warning = value; RaisePropertyChanged(); RaisePropertyChanged(nameof(TabHasWarnings)); } }
 
         private string manualFilterWarning;
         /// <summary>NINA's Manual Filter Wheel with more than one filter in the ticked targets: the run pauses at each change.</summary>
@@ -469,6 +485,8 @@ namespace NINA.ObservatoryPlanner.UI {
         // ---------- options ----------
         public bool WithSafety { get => Options.RunMode == RunMode.WithSafety; set { if (value) { ChangeMode(RunMode.WithSafety); } } }
         public bool WithoutSafety { get => Options.RunMode == RunMode.WithoutSafety; set { if (value) { ChangeMode(RunMode.WithoutSafety); } } }
+        public bool PlannerHandlesStage2 { get => Options.Stage2Handler == Stage2Handler.Planner; set { if (value) { Options.Stage2Handler = Stage2Handler.Planner; } } }
+        public bool SequencerHandlesStage2 { get => Options.Stage2Handler == Stage2Handler.AdvancedSequencer; set { if (value) { Options.Stage2Handler = Stage2Handler.AdvancedSequencer; } } }
         /// <summary>"Close up and wait" is chosen: its time limit can be edited.</summary>
         public bool CloseUpOnUnsafe => Options.UnsafeAction == UnsafeAction.CloseUpAndWait;
         public IReadOnlyList<Choice> GapMountChoices { get; }
@@ -753,7 +771,22 @@ namespace NINA.ObservatoryPlanner.UI {
             UpdateRotateWarning();
         }
 
+        private List<string> WarningsFor(StageKind kind, IReadOnlyList<StageEntry> entries, bool stageOff = false) =>
+            StageChecks.Check(kind, entries, Options)
+                .Concat(kind == StageKind.TargetStart ? StageChecks.Stage2(Targets, entries, Options, stageOff) : Array.Empty<string>())
+                .Where(w => !dismissed.Contains(w)).ToList();
+
         private void UpdateRotateWarning() {
+            // stage 2's warnings name the targets, so they follow target edits too
+            if (planner.ActiveContainer?.Stage(StageKind.TargetStart) is { } stage2 && Stages.Count > 1) {
+                var entries = WorkflowLibrary.Describe(stage2);
+                Stages[1].Warnings = WarningsFor(StageKind.TargetStart, entries, stage2.Status == SequenceEntityStatus.DISABLED);
+                var conflict = string.Join(" ", StageChecks.Stage2(Targets, entries, Options, stage2.Status == SequenceEntityStatus.DISABLED));
+                Stage2Warning = conflict.Length == 0 || dismissed.Contains(conflict) ? null : conflict;
+                RaisePropertyChanged(nameof(TabHasWarnings));
+            } else {
+                Stage2Warning = null;
+            }
             var triggers = WorkflowLibrary.Describe(planner.ActiveContainer?.Stage(StageKind.Triggers));
             var warning = StageChecks.RotateWithFilterAf(Targets, triggers);
             RotateAfWarning = warning != null && dismissed.Contains(warning) ? null : warning;
@@ -888,6 +921,7 @@ namespace NINA.ObservatoryPlanner.UI {
                 if (property is nameof(PlannerOptions.GapMount) or nameof(PlannerOptions.GapCloseDome) or nameof(PlannerOptions.GapMinutes)) {
                     RaisePropertyChanged(nameof(GapCloseDomeVisible)); RaisePropertyChanged(nameof(GapWaitSteps)); RaisePropertyChanged(nameof(GapResumeSteps));
                 }
+                if (property == nameof(PlannerOptions.Stage2Handler)) { RefreshStages(); RaisePropertyChanged(nameof(PlannerHandlesStage2)); RaisePropertyChanged(nameof(SequencerHandlesStage2)); RaisePropertyChanged(nameof(TargetChips)); }
                 if (property == nameof(PlannerOptions.WorkflowName)) { RaiseWorkflow(); }
                 if (property == nameof(PlannerOptions.GuidingLimitPixels)) { RaisePropertyChanged(nameof(GuidingLimitArcsec)); }
                 if (property == nameof(PlannerOptions.UnsafeAction)) { RaisePropertyChanged(nameof(CloseUpOnUnsafe)); }
@@ -912,7 +946,10 @@ namespace NINA.ObservatoryPlanner.UI {
             };
             string[] hints = {
                 safety ? "Runs in the evening and after every weather interruption." : "Runs once at the start. The default workflows begin with Wait for Time (astronomical dusk).",
-                "Runs when a target starts" + (safety ? ", and again when it resumes after unsafe." : ".") + " The target's \"When target starts\" choice replaces the Center step.",
+                "Runs when a target starts" + (safety ? ", and again when it resumes after unsafe." : ".")
+                    + (Options.Stage2Handler == Stage2Handler.Planner
+                        ? " The planner moves to the target and starts guiding from the target's settings; Center and Start Guiding here are ignored. Darks, bias and flats skip this stage."
+                        : " Handled by the Advanced Sequencer: add the Center and Start Guiding steps here. Darks, bias and flats skip this stage."),
                 "Checked between exposures. Only triggers can go here.",
                 safety ? "Runs on clouds, rain, dawn, or when every target is complete." : "Runs when every target is done or the last target's time window has ended, then the run stops."
             };
@@ -923,14 +960,20 @@ namespace NINA.ObservatoryPlanner.UI {
                 view.Hint = hints[n - 1];
                 if (c == null) {
                     view.Lines = Array.Empty<StageLine>();
+                    view.SwitchedOff = false;
                     view.EmptyText = "No Observatory Planner workflow is loaded. Use \"Load a default workflow…\" in ⓘ Info.";
                     view.Warnings = Array.Empty<string>();
                     continue;
                 }
                 var entries = WorkflowLibrary.Describe(c.Stage(kind));
-                view.Lines = entries.Select((e, i) => new StageLine(i + 1, e.Category, e.Name, e.Summary)).ToList();
-                view.EmptyText = entries.Count == 0 ? $"No {(kind == StageKind.Triggers ? "triggers" : "instructions")}. This stage does nothing." : null;
-                view.Warnings = StageChecks.Check(kind, entries, Options).Where(w => !dismissed.Contains(w)).ToList();
+                view.SwitchedOff = c.Stage(kind)?.Status == SequenceEntityStatus.DISABLED;
+                view.Lines = entries.Select((e, i) => new StageLine(i + 1, e.Category, e.Name, e.Summary, e.Disabled)).ToList();
+                view.EmptyText = entries.Count == 0
+                    ? kind == StageKind.TargetStart && Options.Stage2Handler == Stage2Handler.Planner
+                        ? "No instructions. The planner moves to the target and starts guiding from the target's settings."
+                        : $"No {(kind == StageKind.Triggers ? "triggers" : "instructions")}. This stage does nothing."
+                    : null;
+                view.Warnings = WarningsFor(kind, entries, view.SwitchedOff);
             }
             UpdateRotateWarning();
             RaisePropertyChanged(nameof(TabHasWarnings));

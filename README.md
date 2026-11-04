@@ -57,6 +57,12 @@ Unit tests (engine, scheduling, astronomy, dialogs):
 dotnet test NINA.ObservatoryPlanner.slnx
 ```
 
+A simulation harness runs the real planner engine against a simulated observatory (power, dome, mount, guiding, camera) through
+seeded random nights: weather changes, targets, options, pauses, stops and hardware faults. Each night is checked against invariants
+(no frame or dome opening while unsafe, 4 End after every 1 Begin, everything shut down at the end, consistent frame counts, ...).
+It runs with `dotnet test` (25 nights per test); for a bigger sweep set `OP_FUZZ_SEEDS`, and replay one night with
+`OP_REPLAY_SEED=n` (`OP_REPLAY_FAULTS=1`, `OP_REPLAY_ACTIONS=1`) on the explicit `Replay` test.
+
 End-to-end tests in a real NINA with the ASCOM OmniSim simulators and a scripted safety monitor (Python 3). They use a separate test profile and never touch your own:
 
 ```powershell

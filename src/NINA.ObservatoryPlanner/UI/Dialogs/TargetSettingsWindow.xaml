@@ -77,9 +77,24 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Margin="0,2,14,0" VerticalAlignment="Top" Style="{StaticResource Muted}" Text="When target starts" />
                 <StackPanel Grid.Column="1">
-                    <RadioButton Content="Slew to and then center on location" GroupName="OnStart" IsChecked="{Binding CenterOnStart}" Style="{DynamicResource OP_Radio}" />
-                    <RadioButton Content="Slew to location" GroupName="OnStart" IsChecked="{Binding SlewOnStart}" Style="{DynamicResource OP_Radio}" />
-                    <RadioButton Content="Do not move to location" GroupName="OnStart" IsChecked="{Binding StayOnStart}" Style="{DynamicResource OP_Radio}" />
+                    <TextBlock Margin="0,0,0,4" FontSize="12" Foreground="#E3A646" Text="{Binding StartChoicesNote}" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasStartChoicesNote}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <StackPanel IsEnabled="{Binding StartChoicesEnabled}">
+                        <RadioButton Content="Slew to and then center on location" GroupName="OnStart" IsChecked="{Binding CenterOnStart}" Style="{DynamicResource OP_Radio}" />
+                        <RadioButton Content="Slew to location" GroupName="OnStart" IsChecked="{Binding SlewOnStart}" Style="{DynamicResource OP_Radio}" />
+                        <RadioButton Content="Do not move to location" GroupName="OnStart" IsChecked="{Binding StayOnStart}" Style="{DynamicResource OP_Radio}" />
+                        <CheckBox Margin="0,6,0,0" Content="Start guiding when the target starts" IsChecked="{Binding GuideOnStart}" Style="{DynamicResource OP_Check}" />
+                    </StackPanel>
                 </StackPanel>
             </Grid>
 

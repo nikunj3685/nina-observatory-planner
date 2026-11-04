@@ -7,3 +7,10 @@ tools/e2e/out/
 tools/e2e/__pycache__/
 # the user's rig logs (private)
 debuglogs/
+
+# local Claude Code hook (spoken replies)
+.claude/settings.local.json
+.claude/speak-reply.ps1
+.claude/speak-control.ps1
+.claude/speech.pid
+.claude/speech.cmd

@@ -179,6 +179,7 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
         private string raText;
         private string decText;
         private OnStartAction onStart;
+        private bool guideOnStart;
         private bool rotate;
         private string angleText;
         private string status;
@@ -193,6 +194,7 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
             raText = CoordinateText.FormatRa(target.RaHours);
             decText = CoordinateText.FormatDec(target.DecDegrees);
             onStart = target.OnStart;
+            guideOnStart = target.GuideOnStart;
             rotate = target.Rotate;
             angleText = target.PositionAngle.ToString("0.#", CultureInfo.CurrentCulture);
             Start = new ConstraintRow(this, target.Start, isStart: true);
@@ -219,6 +221,16 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
         public bool CenterOnStart { get => onStart == OnStartAction.SlewAndCenter; set { if (value) { onStart = OnStartAction.SlewAndCenter; RaiseStart(); } } }
         public bool SlewOnStart { get => onStart == OnStartAction.SlewOnly; set { if (value) { onStart = OnStartAction.SlewOnly; RaiseStart(); } } }
         public bool StayOnStart { get => onStart == OnStartAction.DoNotMove; set { if (value) { onStart = OnStartAction.DoNotMove; RaiseStart(); } } }
+
+        public bool GuideOnStart { get => guideOnStart; set { guideOnStart = value; Raise(); } }
+
+        /// <summary>The start choices and the guiding box apply only when the planner handles stage 2 and the target is not a calibration target.</summary>
+        public bool StartChoicesEnabled => planner.Options.Stage2Handler == Stage2Handler.Planner && !target.IsCalibrationOnly;
+        public string StartChoicesNote =>
+            target.IsCalibrationOnly ? "Calibration target: stages 2 and 3 are skipped. No slew, no guiding, no triggers."
+            : planner.Options.Stage2Handler == Stage2Handler.AdvancedSequencer ? "Handled by stage 2 in the Advanced Sequencer (⚙ Options › Run mode)."
+            : null;
+        public bool HasStartChoicesNote => StartChoicesNote != null;
 
         public bool Rotate { get => rotate; set { rotate = value; Raise(); Raise(nameof(RotateHint)); } }
         public string AngleText { get => angleText; set { angleText = value; Raise(); Raise(nameof(RotateHint)); } }
@@ -265,6 +277,7 @@ namespace NINA.ObservatoryPlanner.UI.Dialogs {
             target.RaHours = ra;
             target.DecDegrees = dec;
             target.OnStart = onStart;
+            target.GuideOnStart = GuideOnStart;
             target.Rotate = Rotate;
             target.PositionAngle = angle;
             Copy(Start.Result(), target.Start);

@@ -38,6 +38,12 @@ namespace NINA.ObservatoryPlanner.Core {
         Task<int> RunTarget(PlannerTarget target, Func<PlannerExposure, bool> canStartFrame, CancellationToken token);
         Task RunGapSteps(IReadOnlyList<GapStep> steps, CancellationToken token);
 
+        /// <summary>The steps after a long wait between targets (open the dome, unpark). False when one of them failed.</summary>
+        async Task<bool> ResumeAfterGap(IReadOnlyList<GapStep> steps, CancellationToken token) {
+            await RunGapSteps(steps, token);
+            return true;
+        }
+
         /// <summary>
         /// Resume on the same target with the mount where it was: instead of 2 Start of target, only make sure the mount
         /// tracks and restart guiding without calibration, then continue imaging.
@@ -675,7 +681,12 @@ namespace NINA.ObservatoryPlanner.Core {
                             log.Info($"{t.Name}: not enough time left in its window for another frame; done for tonight");
                             continue;
                         }
-                        if (gapResume != null) { await hardware.RunGapSteps(gapResume, night.Token); gapResume = null; }
+                        if (gapResume != null) {
+                            var steps = gapResume;
+                            var opened = await hardware.ResumeAfterGap(steps, night.Token);
+                            gapResume = null;
+                            if (!opened) { return await OpeningFailed(); }
+                        }
                         current = t;
                         bool CanFrame(PlannerExposure e) => FrameAllowed() && selector.CanStartFrame(t, clock.Now, TimeSpan.FromSeconds(e.ExposureTime) + FrameOverhead);
                         int frames;
@@ -732,8 +743,9 @@ namespace NINA.ObservatoryPlanner.Core {
                         // the target starts at its set time: the steps after a long wait (unpark, open the dome) run then too
                         var wakeAt = d.At;
                         if (gapResume != null && clock.Now >= wakeAt) {
-                            await hardware.RunGapSteps(gapResume, night.Token);
+                            var opened = await hardware.ResumeAfterGap(gapResume, night.Token);
                             gapResume = null;
+                            if (!opened) { return await OpeningFailed(); }
                             continue;
                         }
                         var sleep = wakeAt - clock.Now;
@@ -748,7 +760,11 @@ namespace NINA.ObservatoryPlanner.Core {
                             slept += step;
                         }
                         waitingForTarget = false;
-                        if (gapResume != null && PausePending) { await hardware.RunGapSteps(gapResume, night.Token); gapResume = null; }
+                        if (gapResume != null && PausePending) {
+                            var opened = await hardware.ResumeAfterGap(gapResume, night.Token);
+                            gapResume = null;
+                            if (!opened) { return await OpeningFailed(); }
+                        }
                         if (stopRequested) { interruptNow.Cancel(); night.Token.ThrowIfCancellationRequested(); }
                         continue;
                     }
@@ -805,6 +821,18 @@ namespace NINA.ObservatoryPlanner.Core {
                 await Stage(StageKind.End, token);
                 if (stopRequested) { return NightStopped(); }
                 return NightResult.Unsafe;
+            }
+
+            // The dome did not open (or the mount did not unpark) after the wait between targets: like a failing step in 1 Begin,
+            // 4 End runs and the run stops, instead of slewing and imaging with the dome shut.
+            async Task<NightResult> OpeningFailed() {
+                log.Info("Opening up after the wait between targets failed: 4 End runs and the run stops");
+                nightActive = false;
+                night.Cancel();
+                log.Phase(PlannerPhase.End, "4 End (opening up failed)");
+                await Stage(StageKind.End, token);
+                log.Phase(PlannerPhase.Stopped, "Stopped: opening the dome or unparking failed after the wait between targets. 4 End has run. Fix the problem and press Run again.");
+                return NightResult.Stopped;
             }
 
             NightResult NightStopped() {

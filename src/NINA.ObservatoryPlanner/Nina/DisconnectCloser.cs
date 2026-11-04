@@ -141,6 +141,29 @@ namespace NINA.ObservatoryPlanner.Nina {
             return exe > 0 ? value.Substring(0, exe + 4) : value.Split(' ')[0];
         }
 
+        /// <summary>
+        /// Closes the program: asks its main window to close (GS Server then disconnects the mount itself), and ends the process when
+        /// it is still there after <paramref name="graceful"/>. True when no process of it is left.
+        /// </summary>
+        public static async Task<bool> Close(string exePath, TimeSpan graceful, CancellationToken token) {
+            var name = Path.GetFileNameWithoutExtension(exePath);
+            var processes = Process.GetProcessesByName(name).Where(p => {
+                try { return string.Equals(p.MainModule?.FileName, exePath, StringComparison.OrdinalIgnoreCase); } catch (Exception) { return true; }
+            }).ToList();
+            try {
+                foreach (var p in processes) { try { p.CloseMainWindow(); } catch (Exception ex) { Logger.Error(ex); } }
+                var until = DateTime.UtcNow + graceful;
+                while (DateTime.UtcNow < until && processes.Any(p => !p.HasExited)) { await Task.Delay(500, token); }
+                foreach (var p in processes.Where(p => !p.HasExited)) {
+                    Logger.Warning($"Observatory Planner: {name} did not close within {graceful.TotalSeconds:0} s; ending it");
+                    try { p.Kill(); p.WaitForExit(5000); } catch (Exception ex) { Logger.Error(ex); }
+                }
+                return processes.All(p => p.HasExited);
+            } finally {
+                foreach (var p in processes) { p.Dispose(); }
+            }
+        }
+
         /// <summary>True while a process of this program runs.</summary>
         public static bool IsRunning(string exePath) {
             var name = Path.GetFileNameWithoutExtension(exePath);

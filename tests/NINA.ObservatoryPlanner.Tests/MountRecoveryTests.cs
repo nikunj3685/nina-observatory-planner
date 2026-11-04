@@ -42,6 +42,47 @@ namespace NINA.ObservatoryPlanner.Tests {
             log2.Last().Should().Be("Mount recovery failed after 2 tries: the mount position is unknown");
         }
 
+        [Test]
+        public async Task A_dead_link_in_the_mount_software_restarts_it_before_the_next_try() {
+            const string dead = "Mount: ErrQueueFailed, Queue | IsRunning:True| IsCancel:False| IsConnected:False";
+            var log = new List<string>();
+            var autoHomes = new Queue<string>(new[] { dead, null });
+            var restarts = 0;
+            var r = new MountRecovery(_ => Task.FromResult(true), _ => Task.FromResult(autoHomes.Dequeue()), _ => Task.FromResult(true),
+                                      (d, t) => Task.CompletedTask, log.Add, _ => { restarts++; return Task.FromResult(true); });
+            (await r.Run(3, CancellationToken.None)).Should().BeTrue();
+            restarts.Should().Be(1);
+            log.Should().ContainInOrder("Mount recovery 1/3: AutoHome failed: " + dead,
+                "Mount recovery 1/3: the mount software has no link to the mount; closing it so that it starts again",
+                "Mount recovery 2/3: waiting 10 s, then reconnecting the mount");
+        }
+
+        [Test]
+        public async Task Other_AutoHome_errors_do_not_restart_the_mount_software() {
+            var restarts = 0;
+            var r = new MountRecovery(_ => Task.FromResult(true), _ => Task.FromResult("sensor not found"), _ => Task.FromResult(true),
+                                      (d, t) => Task.CompletedTask, _ => { }, _ => { restarts++; return Task.FromResult(true); });
+            (await r.Run(2, CancellationToken.None)).Should().BeFalse();
+            restarts.Should().Be(0);
+        }
+
+        [Test]
+        public async Task A_restart_that_fails_is_logged_and_the_recovery_goes_on() {
+            var log = new List<string>();
+            var r = new MountRecovery(_ => Task.FromResult(true), _ => Task.FromResult("IsConnected:False"), _ => Task.FromResult(true),
+                                      (d, t) => Task.CompletedTask, log.Add, _ => Task.FromResult(false));
+            (await r.Run(2, CancellationToken.None)).Should().BeFalse();
+            log.Should().Contain("Mount recovery 1/2: the mount software could not be closed");
+            log.Should().Contain("Mount recovery 2/2: waiting 10 s, then reconnecting the mount");
+        }
+
+        [TestCase("Mount: ErrQueueFailed, Queue | IsRunning:True| IsCancel:False| IsConnected:False", true)]
+        [TestCase("mount: iscONNECTed:false", true)]
+        [TestCase("it did not finish within 10 minutes", false)]
+        [TestCase(null, false)]
+        public void The_dead_link_is_recognised_from_GS_Servers_reason(string reason, bool dead) =>
+            MountRecovery.MountLinkIsDead(reason).Should().Be(dead);
+
         // ---------- the engine ----------
 
         private sealed class LostMountHardware : IPlannerHardware {

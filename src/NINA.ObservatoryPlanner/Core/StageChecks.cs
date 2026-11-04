@@ -7,7 +7,8 @@ namespace NINA.ObservatoryPlanner.Core {
     public enum StageKind { Begin = 1, TargetStart = 2, Triggers = 3, End = 4 }
 
     /// <summary>What the checks need to know about one instruction in a stage.</summary>
-    public sealed record StageEntry(string TypeName, string Name, string Device = null, string Category = null, string Summary = null) {
+    /// <summary><paramref name="Disabled"/>: switched off in the Advanced Sequencer (the instruction itself, or its whole stage); it does not run.</summary>
+    public sealed record StageEntry(string TypeName, string Name, string Device = null, string Category = null, string Summary = null, bool Disabled = false) {
         public bool NeedsEquipment => EquipmentTypes.Contains(TypeName);
         public bool IsConnect => TypeName is "ConnectAllEquipment" or "ConnectEquipment";
         public bool IsDisconnect => TypeName is "DisconnectAllEquipment" or "DisconnectEquipment";
@@ -43,6 +44,7 @@ namespace NINA.ObservatoryPlanner.Core {
 
         public static IReadOnlyList<string> Check(StageKind stage, IReadOnlyList<StageEntry> items, PlannerOptions options) {
             var warnings = new List<string>();
+            items = items.Where(i => !i.Disabled).ToList(); // a switched-off instruction does not run, so it can't be in the wrong order
             var kept = new[] { "Safety Monitor", "Switch", "Dome", "Weather", "Camera", "Filter Wheel", "Focuser", "Rotator", "Mount", "Guider", "Flat Panel" }
                 .Where(options.Keeps).ToList();
 
@@ -100,6 +102,45 @@ namespace NINA.ObservatoryPlanner.Core {
                         warnings.Add($"\"{item.Name}\" needs the {Label(device)}, which \"{gone[device].Name}\" ({Label(device)}) has already disconnected. Move it above that step.");
                         break;
                     }
+                }
+            }
+            return warnings;
+        }
+
+        /// <summary>Instructions that move the mount to the target (CenterAndRotate is a Center).</summary>
+        public static bool IsMove(string typeName) => typeName is "Center" or "CenterAndRotate" or "SlewScopeToRaDec";
+        public static bool IsGuiding(string typeName) => typeName == "StartGuiding";
+
+        /// <summary>
+        /// Stage 2 against ⚙ Options › Run mode › "Stage 2 handled by". Planner: Slew/Center and Start Guiding steps in the stage are left out.
+        /// Advanced Sequencer: the stage must do the moving and the guiding itself. The warnings name the targets; calibration targets
+        /// skip the whole stage and are not mentioned.
+        /// </summary>
+        public static IReadOnlyList<string> Stage2(IEnumerable<PlannerTarget> targets, IReadOnlyList<StageEntry> items, PlannerOptions options, bool stageOff = false) {
+            var warnings = new List<string>();
+            var affected = targets.Where(t => t.Enabled && !t.IsComplete && !t.IsCalibrationOnly).Select(t => t.Name).ToList();
+            if (affected.Count == 0) { return warnings; }
+            var names = affected.Count <= 4 ? string.Join(", ", affected) : $"{string.Join(", ", affected.Take(4))} and {affected.Count - 4} more";
+            if (stageOff) {
+                warnings.Add($"Stage 2 is switched off in the Advanced Sequencer, so nothing runs at the start of a target: no move and no guiding for {names}.");
+                return warnings;
+            }
+            items = items.Where(i => !i.Disabled).ToList();
+            var moves = items.Where(i => IsMove(i.TypeName)).Select(i => $"\"{i.Name}\"").ToList();
+            var guiding = items.Where(i => IsGuiding(i.TypeName)).Select(i => $"\"{i.Name}\"").ToList();
+            if (options.Stage2Handler == Stage2Handler.Planner) {
+                if (moves.Count > 0) {
+                    warnings.Add($"The planner handles moving to the target (⚙ Options › Run mode), so {string.Join(", ", moves)} here is ignored for {names}. Remove it, or set Stage 2 to the Advanced Sequencer.");
+                }
+                if (guiding.Count > 0) {
+                    warnings.Add($"The planner handles guiding (the target's \"Start guiding\" setting), so {string.Join(", ", guiding)} here is ignored for {names}. Remove it, or set Stage 2 to the Advanced Sequencer.");
+                }
+            } else {
+                if (moves.Count == 0) {
+                    warnings.Add($"Stage 2 is handled by the Advanced Sequencer, but nothing here moves the mount (Center or Slew): the mount will not move for {names}.");
+                }
+                if (guiding.Count == 0) {
+                    warnings.Add($"Stage 2 is handled by the Advanced Sequencer, but nothing here starts guiding: guiding will not start for {names}.");
                 }
             }
             return warnings;

@@ -1,3 +1,4 @@
+using NINA.Core.Enum;
 using NINA.Core.Locale;
 using NINA.ObservatoryPlanner.Core;
 using NINA.Sequencer.Container;
@@ -58,7 +59,8 @@ namespace NINA.ObservatoryPlanner.Nina {
             // 4 End parks the mount and NINA does not slew a parked mount, so 1 Begin unparks it.
             begin.Add(f.Unpark());
 
-            var targetStart = new List<ISequenceItem> { f.Center(), f.StartGuiding(true) };
+            // the planner moves to each target and starts guiding from the target's settings (⚙ Options › Run mode › Stage 2)
+            var targetStart = new List<ISequenceItem>();
 
             var triggers = new List<ISequenceTrigger> { f.DitherAfter(1), FilterChangeAutofocus(planner), f.MeridianFlip() };
             if (dome && !safety) { triggers.Add(f.SynchronizeDome()); }
@@ -136,10 +138,11 @@ namespace NINA.ObservatoryPlanner.Nina {
         public static IReadOnlyList<StageEntry> Describe(PlannerStageContainer stage) {
             if (stage == null) { return Array.Empty<StageEntry>(); }
             var targetStage = stage.Stage == StageKind.TargetStart;
+            var stageOff = stage.Status == SequenceEntityStatus.DISABLED;
             var entries = stage.Items.Select(i => new StageEntry(i.GetType().Name, i.Name, InstructionFactory.DeviceOf(i),
-                    InstructionSummary.CategoryOf(i), InstructionSummary.Of(i, targetStage)))
+                    InstructionSummary.CategoryOf(i), InstructionSummary.Of(i, targetStage), stageOff || i.Status == SequenceEntityStatus.DISABLED))
                 .Concat(stage.Triggers.Select(t => new StageEntry(t.GetType().Name, t.Name, null,
-                    InstructionSummary.CategoryOf(t), InstructionSummary.Of(t, targetStage))));
+                    InstructionSummary.CategoryOf(t), InstructionSummary.Of(t, targetStage), stageOff || t.Status == SequenceEntityStatus.DISABLED)));
             return entries.ToList();
         }
     }
