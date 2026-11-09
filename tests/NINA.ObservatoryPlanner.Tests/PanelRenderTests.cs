@@ -139,6 +139,7 @@ namespace NINA.ObservatoryPlanner.Tests {
             try {
                 var planner = new PlannerService(null, root);
                 planner.Options.PanelTextSize = 12;
+                if (Enum.TryParse<RunMode>(Environment.GetEnvironmentVariable("OP_RENDER_MODE"), out var mode)) { planner.Options.RunMode = mode; }
                 planner.Targets.Add(planner.NewTarget("Barnard 175"));
                 var vm = new PlannerDockableVM(new Mock<IProfileService>().Object, planner) { SelectedPlannerTab = 2 };
                 var template = (DataTemplate)new PlannerView()["NINA.ObservatoryPlanner.UI.PlannerDockableVM_Dockable"];
@@ -153,7 +154,7 @@ namespace NINA.ObservatoryPlanner.Tests {
                     e.IsExpanded = e.Header is TextBlock t && t.Text == section;
                 }
                 w.UpdateLayout();
-                var path = Path.Combine(folder, "options-" + section.ToLowerInvariant().Replace(' ', '-').Replace("(", "").Replace(")", "") + ".png");
+                var path = Path.Combine(folder, "options-" + section.ToLowerInvariant().Replace(' ', '-').Replace("(", "").Replace(")", "") + (Environment.GetEnvironmentVariable("OP_RENDER_MODE") is { Length: > 0 } m ? "-" + m.ToLowerInvariant() : "") + ".png");
                 var bitmap = new RenderTargetBitmap((int)content.ActualWidth, (int)content.ActualHeight, 96, 96, PixelFormats.Pbgra32);
                 var visual = new DrawingVisual();
                 using (var dc = visual.RenderOpen()) {

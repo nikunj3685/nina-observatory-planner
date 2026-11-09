@@ -21,6 +21,8 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
         public int? StopAtFrame;
         /// <summary>After a pause, how many times the user presses Start sequence.</summary>
         public int Resumes = 1;
+        /// <summary>Run with dome: the "safety" script is the dome shutter, driven by the host; the planner never commands the dome.</summary>
+        public bool HostRunsDome;
         public string Description = "";
         public override string ToString() => $"seed {Seed}: {Description}";
     }
@@ -108,13 +110,25 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
         }
     }
 
+    internal static class DomeScenarios {
+
+        /// <summary>The same random night, as Run with dome: the weather script becomes the host opening and closing the dome.</summary>
+        public static Scenario Make(int seed, bool faults = false, bool userActions = false) {
+            var s = ScenarioGenerator.Make(seed, faults, userActions);
+            s.Options.RunMode = RunMode.WithDome;
+            s.HostRunsDome = true;
+            s.Description = "dome shutter, " + s.Description.Substring(s.Description.IndexOf(',') + 2);
+            return s;
+        }
+    }
+
     internal static class ScenarioRunner {
 
         /// <summary>Runs the real engine against the simulated observatory until the night is done (or the simulated day is over).</summary>
         public static async Task<ScenarioResult> Run(Scenario s, int realSeconds = 60) {
             var clock = new HarnessClock(s.Start);
             var safety = s.Safety(clock);
-            var hw = new SimObservatory(clock, safety, s.Faults, new Random(s.Seed ^ 0x5eed));
+            var hw = new SimObservatory(clock, safety, s.Faults, new Random(s.Seed ^ 0x5eed)) { HostRunsDome = s.HostRunsDome };
             var log = new RecordingLog();
             var selector = TestData.Selector(s.Options);
             var engine = new PlannerEngine(s.Options, selector, () => s.Targets, hw, safety, clock, log) {
@@ -179,7 +193,7 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
             var s = r.Scenario;
             var j = r.Journal;
             var hw = r.Hardware;
-            var withSafety = s.Options.RunMode == RunMode.WithSafety;
+            var withSafety = s.Options.UsesSafety; // the safety monitor, or the dome shutter
 
             if (r.Error != null) { v.Add($"the engine threw {r.Error.GetType().Name}: {r.Error.Message}"); }
             if (r.TimedOut) { v.Add("the run did not finish in real time (deadlock or endless loop)"); }
@@ -236,7 +250,7 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
                     if (hw.Powered) { v.Add("the run is over but the power is still on"); }
                     if (hw.Guiding) { v.Add("the run is over but guiding is still on"); }
                     if (!hw.Parked && !s.Faults.Any) { v.Add("the run is over but the mount is not parked"); }
-                    if (hw.DomeOpen && !s.Faults.Any) { v.Add("the run is over but the dome is open"); }
+                    if (hw.DomeOpen && !s.Faults.Any && !s.HostRunsDome) { v.Add("the run is over but the dome is open"); }
                 }
             }
             return v;
@@ -249,6 +263,11 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
             sb.AppendLine("  outcomes: " + string.Join(", ", r.Outcomes));
             sb.AppendLine("  last phases:");
             foreach (var p in r.Phases.TakeLast(8)) { sb.AppendLine($"    {p.phase}: {p.message}"); }
+            var first = Array.FindIndex(r.Journal, e => e.Kind == "VIOLATION");
+            if (first >= 0) {
+                sb.AppendLine("  journal around the first violation:");
+                foreach (var e in r.Journal.Skip(Math.Max(0, first - 14)).Take(18)) { sb.AppendLine($"    {e.At:HH:mm:ss} {(e.Safe ? "safe  " : "UNSAFE")} {e.Kind} {e.Detail}"); }
+            }
             sb.AppendLine("  last journal:");
             foreach (var e in r.Journal.TakeLast(25)) { sb.AppendLine($"    {e.At:HH:mm:ss} {(e.Safe ? "safe  " : "UNSAFE")} {e.Kind} {e.Detail}"); }
             return sb.ToString();

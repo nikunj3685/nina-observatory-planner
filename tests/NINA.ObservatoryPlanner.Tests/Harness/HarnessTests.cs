@@ -59,13 +59,80 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
             if (closedOnUnparked > 0) { Assert.Warn($"{closedOnUnparked} of {runs.Count} faulty nights closed the dome after the park had failed (the mount may not have been clear of it)"); }
         }
 
+        // ---------- Run with dome: the host opens and closes the dome, the planner never does ----------
+
+        [Test]
+        public async Task Random_dome_nights_keep_every_invariant_and_the_planner_never_touches_the_dome() =>
+            AssertNoViolations(await RunMany(seed => DomeScenarios.Make(seed)));
+
+        [Test]
+        public async Task Random_dome_nights_with_pauses_and_stops_keep_every_invariant() =>
+            AssertNoViolations(await RunMany(seed => DomeScenarios.Make(seed, userActions: true)));
+
+        [Test]
+        public async Task Random_dome_nights_with_hardware_faults_never_break_the_engine() {
+            var runs = await RunMany(seed => DomeScenarios.Make(seed, faults: true, userActions: true));
+            // only the park can fail here (the planner has no dome to close); a failed park is the hardware's fault
+            static bool Gap(string v) => v.Contains("park while guiding");
+            AssertNoViolations(runs.Select(x => (x.result, x.violations.Where(v => !Gap(v)).ToList())).ToList());
+        }
+
+        [Test]
+        public async Task A_night_with_the_host_closing_the_dome_twice_runs_4_End_each_time_and_commands_the_dome_never() {
+            var s = DomeScenarios.Make(5);
+            s.Options.UnsafeAction = UnsafeAction.RunEnd;
+            s.Options.SafeDelaySeconds = 0;
+            s.Options.GapMount = GapMountAction.StopTrackingAndPark;
+            s.Options.GapCloseDome = true;
+            s.Targets = new List<PlannerTarget> { TestData.Circumpolar("T", frames: 40, exposure: 300) };
+            s.Safety = c => new RandomSafety(c, true).At(TestData.Night(22), false).At(TestData.Night(23), true).At(TestData.Night(0, 30), false).At(TestData.Night(1, 30), true).At(TestData.Night(6, 30), false);
+            s.PauseAtFrame = null; s.StopAtFrame = null;
+            var r = await ScenarioRunner.Run(s);
+
+            Invariants.Check(r).Should().BeEmpty();
+            r.Journal.Count(e => e.Kind == "stage 1 begin").Should().BeGreaterOrEqualTo(3, "once in the evening and once after each time the host reopened the dome");
+            r.Journal.Where(e => e.Kind == "open dome" || e.Kind == "close dome").Should().BeEmpty("the planner never commands the dome in Run with dome");
+            r.Journal.Where(e => e.Kind == "frame start").Should().OnlyContain(e => e.Safe, "no frame starts while the dome is closed");
+        }
+
+        [Test]
+        public async Task A_close_up_night_with_the_host_closing_the_dome_parks_and_waits_without_touching_it() {
+            var s = DomeScenarios.Make(8);
+            s.Options.UnsafeAction = UnsafeAction.CloseUpAndWait;
+            s.Options.CloseUpMaxHours = 3;
+            s.Options.SafeDelaySeconds = 0;
+            s.Targets = new List<PlannerTarget> { TestData.Circumpolar("T", frames: 40, exposure: 300) };
+            s.Safety = c => new RandomSafety(c, true).At(TestData.Night(22), false).At(TestData.Night(23), true).At(TestData.Night(6, 30), false);
+            s.PauseAtFrame = null; s.StopAtFrame = null;
+            var r = await ScenarioRunner.Run(s);
+
+            Invariants.Check(r).Should().BeEmpty();
+            r.Journal.Should().Contain(e => e.Kind == "close up");
+            r.Journal.Should().Contain(e => e.Kind == "reopen");
+            r.Journal.Count(e => e.Kind == "stage 1 begin").Should().Be(1, "the close-up keeps everything powered, so 1 Begin does not run again");
+            r.Journal.Where(e => e.Kind == "open dome" || e.Kind == "close dome").Should().BeEmpty();
+            r.Journal.First(e => e.Kind == "reopen").At.Should().BeOnOrAfter(TestData.Night(23));
+        }
+
+        [Test]
+        public async Task A_host_that_never_opens_the_dome_keeps_everything_off() {
+            var s = DomeScenarios.Make(2);
+            s.Targets = new List<PlannerTarget> { TestData.Circumpolar("T", frames: 5, exposure: 300) };
+            s.Safety = c => new RandomSafety(c, false);
+            s.PauseAtFrame = null; s.StopAtFrame = null;
+            var r = await ScenarioRunner.Run(s);
+            r.Journal.Where(e => e.Kind == "power on" || e.Kind == "stage 1 begin" || e.Kind == "frame start").Should().BeEmpty();
+            r.Hardware.Powered.Should().BeFalse();
+        }
+
         /// <summary>Reproduces one night, e.g. a seed named by a failing test. Run with OP_REPLAY_SEED=n.</summary>
         [Test, Explicit("set OP_REPLAY_SEED")]
         public async Task Replay() {
             var seed = int.Parse(Environment.GetEnvironmentVariable("OP_REPLAY_SEED") ?? "1");
             var faults = Environment.GetEnvironmentVariable("OP_REPLAY_FAULTS") == "1";
             var actions = Environment.GetEnvironmentVariable("OP_REPLAY_ACTIONS") == "1";
-            var r = await ScenarioRunner.Run(ScenarioGenerator.Make(seed, faults, actions));
+            var dome = Environment.GetEnvironmentVariable("OP_REPLAY_DOME") == "1";
+            var r = await ScenarioRunner.Run(dome ? DomeScenarios.Make(seed, faults, actions) : ScenarioGenerator.Make(seed, faults, actions));
             TestContext.WriteLine(Invariants.Report(r, Invariants.Check(r)));
         }
 

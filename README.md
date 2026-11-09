@@ -5,7 +5,8 @@
 A plugin for [N.I.N.A.](https://nighttime-imaging.eu/) 3.2 that runs an observatory unattended, SGP style. You plan targets in a simple panel; the plugin does the rest every night:
 
 - **With a safety monitor:** waits until it is safe, then powers up, connects, cools, opens the dome and unparks, images your targets in priority order, and shuts everything down when it turns unsafe or the night is done. When it is safe again it resumes where it stopped.
-- **Without a safety monitor:** one pass through the targets per Run, starting at astronomical dusk.
+- **With the dome shutter (Run with dome):** for a hosted observatory where the host runs the dome. The dome shutter being open is the safety signal; the planner never opens or closes the dome (those steps are switched off), parks when the shutter leaves Open, and resumes when it is open again. It does not protect against weather by itself.
+- **Manual (without a safety monitor):** one pass through the targets per Run, starting at astronomical dusk.
 
 The four stages of the night are ordinary Advanced Sequencer instruction sets you can edit with any instruction, including ones from other plugins:
 

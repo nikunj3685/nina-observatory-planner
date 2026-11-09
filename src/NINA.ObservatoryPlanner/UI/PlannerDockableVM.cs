@@ -60,8 +60,8 @@ namespace NINA.ObservatoryPlanner.UI {
         }
         public string Device { get; }
         public string Label => Device == "Switch" ? "Switch hub" : Device;
-        public bool Locked => Device == "Safety Monitor" && options.RunMode == RunMode.WithSafety;
-        public string Note => Locked ? "required with safety" : null;
+        public bool Locked => (Device == "Safety Monitor" && options.RunMode == RunMode.WithSafety) || (Device == "Dome" && options.RunMode == RunMode.WithDome);
+        public string Note => !Locked ? null : Device == "Dome" ? "required with dome" : "required with safety";
         public bool IsChecked {
             get => options.Keeps(Device);
             set {
@@ -155,6 +155,7 @@ namespace NINA.ObservatoryPlanner.UI {
                 // the dock creates its tabs once the Imaging tab is shown; select ours after that
                 Application.Current?.Dispatcher.BeginInvoke(new Action(() => DockSelector.Select(this, Title)), DispatcherPriority.ContextIdle);
             };
+            lastMode = Options.RunMode;
             Options.PropertyChanged += (_, e) => OptionChanged(e.PropertyName);
             Options.KeepConnected.CollectionChanged += (_, _) => { foreach (var k in KeepItems) { k.Refresh(); } RaisePropertyChanged(nameof(KeepChips)); RefreshStages(); };
 
@@ -215,7 +216,7 @@ namespace NINA.ObservatoryPlanner.UI {
 
         // ---------- status strip and phase chain ----------
         public bool IsRunning => planner.IsRunning;
-        public string RunButtonText => planner.IsRunning || planner.IsPaused ? "■ Stop" : (WithSafety ? "▶ Run forever" : "▶ Run");
+        public string RunButtonText => planner.IsRunning || planner.IsPaused ? "■ Stop" : (UsesSafety ? "▶ Run forever" : "▶ Run");
         public string RunButtonTip => planner.IsRunning || planner.IsPaused
             ? "Stop: the frame being taken is dropped, 4 End runs (park, close, warm, power off) and the run ends."
             : "Start the night loop.";
@@ -269,19 +270,23 @@ namespace NINA.ObservatoryPlanner.UI {
                     return planner.PauseNote != null ? $"{where} {planner.PauseNote}" : $"{where} Guiding stopped; tracking, dome and power stay on. Press Start sequence to continue.";
                 }
                 if (planner.IsRunning) { return planner.StatusText; }
-                if (planner.Phase == PlannerPhase.Finished) { return WithSafety ? planner.StatusText : "All targets are done and 4 End has run. Press Run to start again."; }
+                if (planner.Phase == PlannerPhase.Finished) { return UsesSafety ? planner.StatusText : "All targets are done and 4 End has run. Press Run to start again."; }
                 if (planner.Phase == PlannerPhase.Stopped && planner.StatusText.Contains("error")) { return planner.StatusText; }
-                return WithSafety ? "Press Run forever to start the automatic night loop." : "Press Run to start: 1 Begin, then your targets, then 4 End.";
+                return UsesSafety ? "Press Run forever to start the automatic night loop." : "Press Run to start: 1 Begin, then your targets, then 4 End.";
             }
         }
 
         public string PillText => planner.IsPaused && !planner.IsRunning ? "Paused"
             : !planner.IsRunning ? (planner.Phase == PlannerPhase.Finished ? "Finished" : "Stopped")
-            : !WithSafety ? "No safety monitor"
+            : !UsesSafety ? "No safety monitor"
+            : WithDomeMode ? (safe == true ? "Dome open" : safe == false ? "Dome not open" : "No dome data")
             : safe == true ? "Safe" : safe == false ? "Unsafe" : "No safety data";
 
         public Brush PillBrush => planner.IsPaused && !planner.IsRunning ? PlannerBrushes.Accent
-            : !planner.IsRunning || !WithSafety ? PlannerBrushes.Muted : safe == true ? PlannerBrushes.Safe : PlannerBrushes.Unsafe;
+            : !planner.IsRunning || !UsesSafety ? PlannerBrushes.Muted : safe == true ? PlannerBrushes.Safe : PlannerBrushes.Unsafe;
+
+        /// <summary>The chip for the wait before 1 Begin: for the safety monitor to report safe, or for the dome to open.</summary>
+        public string WaitChipText => WithDomeMode ? "Waiting for dome" : "Waiting for safe";
 
         private bool Step(params PlannerPhase[] phases) => planner.IsRunning && phases.Contains(planner.Phase);
         public bool StepWait => Step(PlannerPhase.WaitingForSafe, PlannerPhase.WaitingForNextNight, PlannerPhase.ClosedUp);
@@ -291,7 +296,7 @@ namespace NINA.ObservatoryPlanner.UI {
         public bool StepEnd => Step(PlannerPhase.End);
 
         /// <summary>The stage running now, shown next to the state when the stage line does not fit; empty when nothing runs.</summary>
-        public string CurrentStageText => StepWait ? "Waiting for safe" : StepBegin ? "1 Begin" : StepTarget ? "2 Start of target" : StepImaging ? "Imaging + 3 triggers" : StepEnd ? "4 End" : "";
+        public string CurrentStageText => StepWait ? WaitChipText : StepBegin ? "1 Begin" : StepTarget ? "2 Start of target" : StepImaging ? "Imaging + 3 triggers" : StepEnd ? "4 End" : "";
 
         private void ServiceChanged(string property) {
             switch (property) {
@@ -343,17 +348,29 @@ namespace NINA.ObservatoryPlanner.UI {
             foreach (var p in new[] { nameof(IsRunning), nameof(RunButtonText), nameof(RunButtonTip), nameof(StopShown), nameof(IsPaused), nameof(PauseShown), nameof(PausingShown),
                 nameof(PauseEnabled), nameof(PauseTip),
                 nameof(StatusText), nameof(PillText), nameof(PillBrush),
-                nameof(StepWait), nameof(StepBegin), nameof(StepTarget), nameof(StepImaging), nameof(StepEnd), nameof(CurrentStageText) }) {
+                nameof(StepWait), nameof(StepBegin), nameof(StepTarget), nameof(StepImaging), nameof(StepEnd), nameof(CurrentStageText), nameof(CanChangeMode), nameof(ModeLocked) }) {
                 RaisePropertyChanged(p);
             }
         }
 
         private void RefreshSafety() {
             bool? now = null;
+            var dome = (Connected: false, Shutter: DomeShutter.None);
             try {
-                var info = planner.Nina.SafetyMonitor.GetInfo();
-                if (info?.Connected == true) { now = info.IsSafe; }
+                if (Options.RunMode == RunMode.WithDome) {
+                    dome = planner.DomeNow();
+                    var read = DomeSafety.Read(dome.Connected, dome.Shutter);
+                    if (read.Connected) { now = read.IsSafe; }
+                } else {
+                    var info = planner.Nina.SafetyMonitor.GetInfo();
+                    if (info?.Connected == true) { now = info.IsSafe; }
+                }
             } catch (Exception) { }
+            if (dome.Connected != domeConnected || dome.Shutter != domeShutter) {
+                domeConnected = dome.Connected;
+                domeShutter = dome.Shutter;
+                foreach (var p in new[] { nameof(DomeChipText), nameof(DomeMessage), nameof(DomeChipBrush), nameof(DomeProblems) }) { RaisePropertyChanged(p); }
+            }
             if (now != safe) {
                 safe = now;
                 RaisePropertyChanged(nameof(PillText));
@@ -422,8 +439,8 @@ namespace NINA.ObservatoryPlanner.UI {
                     t.IsCalibrationOnly ? "Calibration: no slew, no guiding"
                         : Options.Stage2Handler == Stage2Handler.AdvancedSequencer ? "Stage 2 in the sequencer"
                         : t.OnStart switch { OnStartAction.SlewAndCenter => "Slew and center", OnStartAction.SlewOnly => "Slew only", _ => "Stays where it is" },
-                    t.Start.Enabled ? "starts at " + Constraint(t.Start) : WithSafety ? "starts when safe" : "starts when dark",
-                    t.End.Enabled ? "ends at " + Constraint(t.End) : WithSafety ? "runs until unsafe" : "runs until dawn"
+                    t.Start.Enabled ? "starts at " + Constraint(t.Start) : WithDomeMode ? "starts when the dome is open" : WithSafety ? "starts when safe" : "starts when dark",
+                    t.End.Enabled ? "ends at " + Constraint(t.End) : WithDomeMode ? "runs until the dome closes" : WithSafety ? "runs until unsafe" : "runs until dawn"
                 };
                 if (!t.IsCalibrationOnly && Options.Stage2Handler == Stage2Handler.Planner) { chips.Add(t.GuideOnStart ? "guided" : "not guided"); }
                 // without a rotator in NINA's profile the rotation is not used: 2 Start of target only slews and centers
@@ -462,8 +479,10 @@ namespace NINA.ObservatoryPlanner.UI {
         public IReadOnlyList<KeepItem> KeepItems { get; }
         public IReadOnlyList<string> KeepChips => KeepItems.Where(k => k.IsChecked).Select(k => k.Label).DefaultIfEmpty("None").ToList();
         public ObservableCollection<StageView> Stages { get; }
-        public string ModeSummary => WithSafety ? "Run with safety" : "Run without safety";
-        public string CycleHint => WithSafety
+        public string ModeSummary => WithDomeMode ? "Run with dome" : WithSafety ? "Run with safety" : "Manual";
+        public string CycleHint => WithDomeMode
+            ? "Each stage is an Advanced Sequencer instruction set: edit it in NINA's sequencer with any instruction, including ones from other plugins. The dome closing at any point jumps to 4; after 4 the planner waits for the dome to open and starts again at 1. The observatory runs the dome: Open and Close Dome Shutter are switched off."
+            : UsesSafety
             ? "Each stage is an Advanced Sequencer instruction set: edit it in NINA's sequencer with any instruction, including ones from other plugins. Unsafe at any point jumps to 4; after 4 the planner waits for safe and starts again at 1."
             : "Each stage is an Advanced Sequencer instruction set: edit it in NINA's sequencer with any instruction, including ones from other plugins. The run goes through your targets once and ends with 4.";
 
@@ -485,14 +504,64 @@ namespace NINA.ObservatoryPlanner.UI {
         // ---------- options ----------
         public bool WithSafety { get => Options.RunMode == RunMode.WithSafety; set { if (value) { ChangeMode(RunMode.WithSafety); } } }
         public bool WithoutSafety { get => Options.RunMode == RunMode.WithoutSafety; set { if (value) { ChangeMode(RunMode.WithoutSafety); } } }
+        public bool WithDome { get => Options.RunMode == RunMode.WithDome; set { if (value) { ChangeMode(RunMode.WithDome); } } }
+        /// <summary>The run loops every night and watches "safe" (the safety monitor, or the dome shutter).</summary>
+        public bool UsesSafety => Options.UsesSafety;
+        private bool WithDomeMode => Options.RunMode == RunMode.WithDome;
+        public bool PlannerHandlesDome => Options.PlannerHandlesDome;
+        /// <summary>The run mode can only be changed while nothing runs (not while paused either: the stages would be half done).</summary>
+        public bool CanChangeMode => !planner.IsRunning && !planner.IsPaused;
+        public bool ModeLocked => !CanChangeMode;
+        public bool CanAutoStart => Options.CanAutoStart;
+        public bool AutoStartBlocked => !Options.CanAutoStart;
+
+        // ----- texts that follow the run mode (Options tab) -----
+        public string SafeDelayText => WithDomeMode ? "the dome is open" : "it becomes safe";
+        public string SafeDelayHint => WithDomeMode
+            ? "The dome must stay open for the whole wait; if it closes, the wait starts again the next time it is open. 0 starts at once."
+            : "It must stay safe for the whole wait; if it turns unsafe, the wait starts again the next time it is safe. 0 starts at once.";
+        public string NightBeginBullet => WithDomeMode
+            ? "• It does not start 1 Begin: with Run with dome, 1 Begin starts when the dome shutter is open."
+            : "• It does not start 1 Begin: with a safety monitor 1 Begin starts when it reports safe; without one the built-in workflows wait for astronomical dusk (Wait for Time in 1 Begin).";
+        public string NightOffBullet => WithDomeMode
+            ? "• Off: the Sun is not considered; targets are limited by their own start and end settings, the horizon and the dome shutter."
+            : "• Off: the Sun is not considered; targets are limited by their own start and end settings, the horizon and the safety monitor.";
+        public string UnsafeTitle => WithDomeMode ? "When the dome closes during the night:" : "When it turns unsafe during the night:";
+        public string CloseUpChoiceText => WithDomeMode
+            ? "Close up and wait: stop guiding and park the mount; power, connections and camera cooling stay on"
+            : "Close up and wait: stop guiding, park, close the dome; power, connections and camera cooling stay on";
+        public string CloseUpTimerText => WithDomeMode ? "Run 4 End if the dome is still closed after " : "Run 4 End if it is still unsafe after ";
+        public string CloseUpHint => WithDomeMode
+            ? "The close-up also ends when nothing is left to image tonight. The morning time chosen here is separate from the Night setting above. When the dome is open again (after the wait after safe): unpark, autofocus before the first frame (with the autofocus option on), then 2 Start of target. Close-up starts once 1 Begin has finished; the dome closing during 1 Begin runs 4 End. If parking fails, 4 End runs at once. Stop while closed up runs 4 End."
+            : "The close-up also ends when nothing is left to image tonight. The morning time chosen here is separate from the Night setting above. When it is safe again (after the wait after safe): open the dome, unpark, autofocus before the first frame (with the autofocus option on), then 2 Start of target. Close-up starts once 1 Begin has finished; unsafe during 1 Begin runs 4 End. If park or closing the dome fails, 4 End runs at once. Stop while closed up runs 4 End.";
+        public string MountRecoveryText => WithoutSafety
+            ? "Reconnect the mount (this starts GS Server), AutoHome with the home sensors through GS Server's API, unpark, then continue: an interrupted 1 Begin from its next step, otherwise 2 Start of target. Not during 4 End. While paused it runs when the run continues, and only if the mount is not connected."
+            : "Reconnect the mount (this starts GS Server), AutoHome with the home sensors through GS Server's API, unpark, then continue: an interrupted 1 Begin from its next step, otherwise 2 Start of target. Not during 4 End. While paused, closed up or waiting it runs when the run continues, and only if the mount is not connected.";
+        public string DeviceRecoveryText => WithDomeMode
+            ? "For the safety monitor, switch, dome and weather (see Devices that stay connected): e.g. when their Alpaca server stops answering for a while, NINA tries once and then disconnects them. While the run is waiting, closed up or paused, the planner connects them again, and right away before running 4 End. A missing dome counts as not open in Run with dome. While the planner is stopped nothing is reconnected; the panel only shows what is not connected."
+            : WithoutSafety
+            ? "For the switch, dome and weather (see Devices that stay connected): e.g. when their Alpaca server stops answering for a while, NINA tries once and then disconnects them. While the run is paused, the planner connects them again, and right away before closing the roof, opening it again or running 4 End. While the planner is stopped nothing is reconnected; the panel only shows what is not connected."
+            : "For the safety monitor, switch, dome and weather (see Devices that stay connected): e.g. when their Alpaca server stops answering for a while, NINA tries once and then disconnects them. While the run is waiting, closed up or paused, the planner connects them again, and right away before closing the roof, opening it again or running 4 End. A missing safety monitor always counts as unsafe. While the planner is stopped nothing is reconnected; the panel only shows what is not connected.";
+        public string DomeModeNote => "In Run with dome, the shutter tells the planner that the dome is open, not that the weather is good. It only protects you if something else closes the dome.";
+
+        // ----- Run with dome: the dome as the panel shows it -----
+        private bool domeConnected;
+        private DomeShutter domeShutter = DomeShutter.None;
+        public bool DomeRowShown => WithDomeMode;
+        public string DomeChipText => DomeSafety.StateText(domeConnected, domeShutter);
+        public string DomeMessage => DomeSafety.Message(domeConnected, domeShutter);
+        public Brush DomeChipBrush => !domeConnected || domeShutter == DomeShutter.None ? PlannerBrushes.Muted
+            : domeShutter == DomeShutter.Open ? PlannerBrushes.Safe : domeShutter == DomeShutter.Opening ? PlannerBrushes.Accent : PlannerBrushes.Unsafe;
+        /// <summary>Run with dome can't work (no dome in the profile, or the dome reports no shutter status).</summary>
+        public IReadOnlyList<string> DomeProblems => WithDomeMode ? DomeSafety.StartProblems(planner.DomeConfigured, domeConnected, domeShutter) : Array.Empty<string>();
         public bool PlannerHandlesStage2 { get => Options.Stage2Handler == Stage2Handler.Planner; set { if (value) { Options.Stage2Handler = Stage2Handler.Planner; } } }
         public bool SequencerHandlesStage2 { get => Options.Stage2Handler == Stage2Handler.AdvancedSequencer; set { if (value) { Options.Stage2Handler = Stage2Handler.AdvancedSequencer; } } }
         /// <summary>"Close up and wait" is chosen: its time limit can be edited.</summary>
         public bool CloseUpOnUnsafe => Options.UnsafeAction == UnsafeAction.CloseUpAndWait;
         public IReadOnlyList<Choice> GapMountChoices { get; }
-        public bool GapCloseDomeVisible => Options.GapMount == GapMountAction.StopTrackingAndPark;
-        public IReadOnlyList<StepChip> GapWaitSteps => Chips(GapPlan.For(Options.GapMount, Options.GapCloseDome).Wait.Select(StepLabel));
-        public IReadOnlyList<StepChip> GapResumeSteps => Chips(GapPlan.For(Options.GapMount, Options.GapCloseDome).Resume.Select(StepLabel).Append("2 Start of target"));
+        public bool GapCloseDomeVisible => Options.GapMount == GapMountAction.StopTrackingAndPark && Options.PlannerHandlesDome;
+        public IReadOnlyList<StepChip> GapWaitSteps => Chips(GapPlan.For(Options.GapMount, Options.GapCloseDome && Options.PlannerHandlesDome).Wait.Select(StepLabel));
+        public IReadOnlyList<StepChip> GapResumeSteps => Chips(GapPlan.For(Options.GapMount, Options.GapCloseDome && Options.PlannerHandlesDome).Resume.Select(StepLabel).Append("2 Start of target"));
         public string GapResumeLabel => "At the next target's start time";
         public string GapHint => $"Shorter waits: guiding stops and the mount keeps tracking. Without a later target tonight the planner runs 4 End instead.";
 
@@ -812,7 +881,8 @@ namespace NINA.ObservatoryPlanner.UI {
             await ConnectSwitchHub();
             var container = WorkflowLibrary.Build(name, planner);
             planner.Nina.Sequence.SetAdvancedSequence(WorkflowLibrary.NewSequence(container));
-            if (Options.RunMode != WorkflowLibrary.ModeOf(name)) { Options.RunMode = WorkflowLibrary.ModeOf(name); }
+            var modeAfter = WorkflowLibrary.ModeAfterLoading(name, Options.RunMode);
+            if (Options.RunMode != modeAfter) { Options.RunMode = modeAfter; }
             Options.WorkflowName = name;
             RefreshStages();
             RaiseWorkflow();
@@ -889,30 +959,56 @@ namespace NINA.ObservatoryPlanner.UI {
             } catch (Exception ex) { Logger.Error(ex); }
         }
 
+        private static string ModeTitle(RunMode mode) => mode == RunMode.WithDome ? "Run with dome" : mode == RunMode.WithSafety ? "Run with safety" : "Manual";
+
         private void ChangeMode(RunMode mode) {
             if (Options.RunMode == mode) { return; }
-            if (planner.IsRunning) {
+            if (planner.IsRunning || planner.IsPaused) {
                 Ask.Info("Run mode", "Stop the run before changing the run mode.");
                 RaiseModeProperties();
                 return;
             }
             var defaultName = WorkflowLibrary.DefaultFor(mode);
-            var answer = Ask.Choose(mode == RunMode.WithSafety ? "Run with safety" : "Run without safety",
-                $"Load the default workflow for running {(mode == RunMode.WithSafety ? "with" : "without")} a safety monitor (\"{defaultName}\")? It replaces your four stages.",
+            var what = mode == RunMode.WithDome ? "running with the dome shutter as the safety signal (the dome steps are switched off)"
+                : mode == RunMode.WithSafety ? "running with a safety monitor" : "running manually, without a safety monitor";
+            var answer = Ask.Choose(ModeTitle(mode),
+                $"Load the default workflow for {what} (\"{defaultName}\")? It replaces your four stages.",
                 Ask.Primary("Load default workflow", "load"), Ask.Plain("Keep my stages", "keep"), Ask.Cancel());
             if (answer == "cancel") { RaiseModeProperties(); return; }
             Options.RunMode = mode;
             if (answer == "load") { _ = LoadWorkflow(defaultName, askToSave: true); }
         }
 
+        private RunMode lastMode;
+
+        /// <summary>Run with dome: the Open and Close Dome Shutter steps of the stages are switched off (the observatory runs the dome); when the mode changes back they are switched on again.</summary>
+        private void ApplyDomeSteps() {
+            var block = planner.ActiveContainer;
+            if (block == null || planner.IsRunning) { return; }
+            var names = new List<string>();
+            foreach (var kind in new[] { StageKind.Begin, StageKind.TargetStart, StageKind.End }) {
+                var stage = block.Stage(kind);
+                if (stage == null) { continue; }
+                names.AddRange(Options.PlannerHandlesDome ? DomeSteps.SwitchOn(stage) : DomeSteps.SwitchOff(stage));
+            }
+            if (names.Count > 0) { planner.Log.Info(Options.PlannerHandlesDome ? $"The planner runs the dome again: {string.Join(", ", names)} switched on" : $"Run with dome, the observatory runs the dome: {string.Join(", ", names)} switched off"); }
+        }
+
         private void RaiseModeProperties() {
-            foreach (var p in new[] { nameof(WithSafety), nameof(WithoutSafety), nameof(NoSafetyWarningShown), nameof(ModeSummary), nameof(CycleHint), nameof(TargetChips), nameof(TabHasWarnings) }) { RaisePropertyChanged(p); }
+            foreach (var p in new[] { nameof(WithSafety), nameof(WithoutSafety), nameof(WithDome), nameof(UsesSafety), nameof(PlannerHandlesDome), nameof(CanChangeMode), nameof(ModeLocked), nameof(CanAutoStart), nameof(AutoStartBlocked),
+                nameof(WaitChipText), nameof(CurrentStageText), nameof(SafeDelayText), nameof(SafeDelayHint), nameof(NightBeginBullet), nameof(NightOffBullet), nameof(UnsafeTitle), nameof(CloseUpChoiceText), nameof(CloseUpTimerText), nameof(CloseUpHint),
+                nameof(MountRecoveryText), nameof(DeviceRecoveryText), nameof(GapCloseDomeVisible), nameof(GapWaitSteps), nameof(GapResumeSteps), nameof(DomeRowShown), nameof(DomeChipText), nameof(DomeMessage), nameof(DomeChipBrush), nameof(DomeProblems),
+                nameof(NoSafetyWarningShown), nameof(ModeSummary), nameof(CycleHint), nameof(TargetChips), nameof(TabHasWarnings) }) { RaisePropertyChanged(p); }
             RaiseStatus();
         }
 
         private void OptionChanged(string property) {
             Ui.Run(() => {
                 if (property == nameof(PlannerOptions.RunMode)) {
+                    // leaving Run with dome: the dome steps the planner switched off are switched on again (entering it is done by RefreshStages)
+                    if (lastMode == RunMode.WithDome && Options.RunMode != RunMode.WithDome) { ApplyDomeSteps(); }
+                    lastMode = Options.RunMode;
+                    RefreshSafety();
                     RaiseModeProperties();
                     foreach (var k in KeepItems) { k.Refresh(); }
                     RaisePropertyChanged(nameof(KeepChips));
@@ -937,21 +1033,22 @@ namespace NINA.ObservatoryPlanner.UI {
                 return; // Register raises ActiveContainerChanged, which refreshes again
             }
             var c = planner.ActiveContainer;
-            var safety = WithSafety;
+            var safety = UsesSafety;
+            if (!Options.PlannerHandlesDome) { ApplyDomeSteps(); }
             string[] titles = {
-                safety ? "Begin: when it becomes safe" : "Begin: when you press Run",
+                WithDomeMode ? "Begin: when the dome is open" : safety ? "Begin: when it becomes safe" : "Begin: when you press Run",
                 "Start of each target",
                 "While imaging: triggers",
-                safety ? "End: when unsafe or finished" : "End: when finished"
+                WithDomeMode ? "End: when the dome closes or finished" : safety ? "End: when unsafe or finished" : "End: when finished"
             };
             string[] hints = {
-                safety ? "Runs in the evening and after every weather interruption." : "Runs once at the start. The default workflows begin with Wait for Time (astronomical dusk).",
-                "Runs when a target starts" + (safety ? ", and again when it resumes after unsafe." : ".")
+                WithDomeMode ? "Runs in the evening once the dome is open, and again after the dome has closed and opened. The observatory runs the dome: Open and Close Dome Shutter are switched off." : safety ? "Runs in the evening and after every weather interruption." : "Runs once at the start. The default workflows begin with Wait for Time (astronomical dusk).",
+                "Runs when a target starts" + (safety ? (WithDomeMode ? ", and again when it resumes after the dome closed." : ", and again when it resumes after unsafe.") : ".")
                     + (Options.Stage2Handler == Stage2Handler.Planner
                         ? " The planner moves to the target and starts guiding from the target's settings; Center and Start Guiding here are ignored. Darks, bias and flats skip this stage."
                         : " Handled by the Advanced Sequencer: add the Center and Start Guiding steps here. Darks, bias and flats skip this stage."),
                 "Checked between exposures. Only triggers can go here.",
-                safety ? "Runs on clouds, rain, dawn, or when every target is complete." : "Runs when every target is done or the last target's time window has ended, then the run stops."
+                WithDomeMode ? "Runs when the dome closes, at dawn, or when every target is complete. The planner does not close the dome." : safety ? "Runs on clouds, rain, dawn, or when every target is complete." : "Runs when every target is done or the last target's time window has ended, then the run stops."
             };
             for (var n = 1; n <= 4; n++) {
                 var view = Stages[n - 1];

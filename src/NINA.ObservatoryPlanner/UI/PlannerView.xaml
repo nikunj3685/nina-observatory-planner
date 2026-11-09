@@ -533,8 +533,8 @@
                     <!--  line 2: the stages, while they fit on one line  -->
                     <local:FirstFitPanel x:Name="stageLine" Margin="0,6,0,0">
                         <StackPanel Orientation="Horizontal">
-                            <Border Style="{StaticResource OP_StageChip}" Tag="{Binding StepWait}" Visibility="{Binding WithSafety, Converter={StaticResource OP_BoolVisible}}">
-                                <TextBlock Style="{StaticResource OP_StageChipText}" Text="Waiting for safe" />
+                            <Border Style="{StaticResource OP_StageChip}" Tag="{Binding StepWait}" Visibility="{Binding UsesSafety, Converter={StaticResource OP_BoolVisible}}">
+                                <TextBlock Style="{StaticResource OP_StageChipText}" Text="{Binding WaitChipText}" />
                             </Border>
                             <Border Style="{StaticResource OP_StageChip}" Tag="{Binding StepBegin}">
                                 <TextBlock Style="{StaticResource OP_StageChipText}" Text="1 Begin" />
@@ -548,7 +548,7 @@
                             <Border Style="{StaticResource OP_StageChip}" Tag="{Binding StepEnd}">
                                 <TextBlock Style="{StaticResource OP_StageChipText}" Text="4 End" />
                             </Border>
-                            <TextBlock Margin="0,0,0,1" VerticalAlignment="Center" FontSize="16" Foreground="{StaticResource OP_Accent}" Text="↺" ToolTip="Repeats" Visibility="{Binding WithSafety, Converter={StaticResource OP_BoolVisible}}" />
+                            <TextBlock Margin="0,0,0,1" VerticalAlignment="Center" FontSize="16" Foreground="{StaticResource OP_Accent}" Text="↺" ToolTip="Repeats" Visibility="{Binding UsesSafety, Converter={StaticResource OP_BoolVisible}}" />
                         </StackPanel>
                         <Border Height="0" />
                     </local:FirstFitPanel>
@@ -560,6 +560,18 @@
                             <TextBlock VerticalAlignment="Center" Text="{Binding StatusText}" TextWrapping="Wrap" />
                         </DockPanel>
                     </Border>
+
+                    <!--  Run with dome: the dome shutter is the safety signal  -->
+                    <WrapPanel Margin="0,6,0,0" VerticalAlignment="Center" Visibility="{Binding DomeRowShown, Converter={StaticResource OP_BoolVisible}}">
+                        <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource OP_Muted}" Text="Dome" />
+                        <Border Margin="0,0,8,0" Padding="9,2" VerticalAlignment="Center" BorderBrush="{Binding DomeChipBrush}" BorderThickness="1" CornerRadius="10">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center" Fill="{Binding DomeChipBrush}" />
+                                <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="{Binding DomeChipBrush}" Text="{Binding DomeChipText}" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock VerticalAlignment="Center" Text="{Binding DomeMessage}" TextWrapping="Wrap" />
+                    </WrapPanel>
 
                     <!--  4 End steps that failed the last time it ran  -->
                     <Border Style="{StaticResource OP_WarnBox}" Visibility="{Binding EndProblems, Converter={StaticResource OP_TextVisible}}">
@@ -1144,32 +1156,54 @@
                                         <TextBlock Style="{StaticResource OP_Heading}" Text="RUN MODE" />
                                     </Expander.Header>
                                     <StackPanel>
-                                        <local:AutoColumnsPanel ColumnGap="8" MaxColumns="2" MinColumnWidth="220" RowGap="8">
-                                            <RadioButton Margin="0" GroupName="OP_Mode" IsChecked="{Binding WithSafety, Mode=TwoWay}" Style="{StaticResource OP_Card}">
+                                        <StackPanel IsEnabled="{Binding CanChangeMode}">
+                                            <RadioButton Margin="0,2,0,2" GroupName="OP_Mode" IsChecked="{Binding WithSafety, Mode=TwoWay}" Style="{StaticResource OP_Radio}">
                                                 <StackPanel>
                                                     <TextBlock FontWeight="SemiBold" Text="Run with safety" />
-                                                    <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="You have a safety monitor. Runs every night: starts when it is safe, shuts down when unsafe, resumes when safe again." />
+                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="You have a safety monitor. Runs every night: starts when it is safe, shuts down when unsafe, resumes when safe again." />
                                                 </StackPanel>
                                             </RadioButton>
-                                            <RadioButton Margin="0" GroupName="OP_Mode" IsChecked="{Binding WithoutSafety, Mode=TwoWay}" Style="{StaticResource OP_Card}">
+                                            <RadioButton Margin="0,6,0,2" GroupName="OP_Mode" IsChecked="{Binding WithDome, Mode=TwoWay}" Style="{StaticResource OP_Radio}">
                                                 <StackPanel>
-                                                    <TextBlock FontWeight="SemiBold" Text="Run without safety" />
-                                                    <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="No safety monitor. Each Run goes through your targets once, then stops. Stay nearby for weather." />
+                                                    <TextBlock FontWeight="SemiBold" Text="Run with dome" />
+                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="Your dome reports its shutter, e.g. a hosted observatory where the host runs the dome. Runs every night: starts when the shutter is open, stops when it leaves Open, resumes when it is open again. The planner never opens or closes the dome." />
                                                 </StackPanel>
                                             </RadioButton>
-                                        </local:AutoColumnsPanel>
+                                            <RadioButton Margin="0,6,0,2" GroupName="OP_Mode" IsChecked="{Binding WithoutSafety, Mode=TwoWay}" Style="{StaticResource OP_Radio}">
+                                                <StackPanel>
+                                                    <TextBlock FontWeight="SemiBold" Text="Manual" />
+                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="No safety monitor. Each Run goes through your targets once, then stops. Stay nearby for weather." />
+                                                </StackPanel>
+                                            </RadioButton>
+                                        </StackPanel>
+                                        <TextBlock Margin="0,6,0,0" Foreground="{StaticResource OP_Accent}" Style="{StaticResource OP_Hint}" Text="🔒 Locked while a run is in progress or paused. Stop the run to change the run mode." Visibility="{Binding ModeLocked, Converter={StaticResource OP_BoolVisible}}" />
+                                        <Border Style="{StaticResource OP_WarnBox}" Tag="OP_Warn" Visibility="{Binding WithDome, Converter={StaticResource OP_BoolVisible}}">
+                                            <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding DomeModeNote, StringFormat=⚠ {0}}" />
+                                        </Border>
+                                        <ItemsControl ItemsSource="{Binding DomeProblems}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Style="{StaticResource OP_WarnBox}" Tag="OP_Warn">
+                                                        <TextBlock Style="{StaticResource OP_WarnText}" Text="{Binding StringFormat=⚠ {0}}" />
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
                                         <TextBlock Margin="0,8,0,0" Style="{StaticResource OP_Hint}" Text="Pick the one that matches your setup; you normally set this once. Changing it offers to load the default workflow for that mode." />
-                                        <CheckBox Margin="0,12,0,0" IsChecked="{Binding Options.AutoStartOnLaunch}" Style="{StaticResource OP_Check}">
-                                            <TextBlock Text="Start the run when NINA starts (the last workflow and target list are reopened first)" TextWrapping="Wrap" />
-                                        </CheckBox>
-                                        <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="For unattended restarts, e.g. after a power cut or a Windows update. A sequence that was paused stays paused." />
-                                        <StackPanel Margin="0,12,0,0" Visibility="{Binding WithSafety, Converter={StaticResource OP_BoolVisible}}">
+                                        <StackPanel Margin="0,12,0,0" IsEnabled="{Binding CanAutoStart}">
+                                            <CheckBox IsChecked="{Binding Options.AutoStartOnLaunch}" Style="{StaticResource OP_Check}">
+                                                <TextBlock Text="Start the run when NINA starts (the last workflow and target list are reopened first)" TextWrapping="Wrap" />
+                                            </CheckBox>
+                                            <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="For unattended restarts, e.g. after a power cut or a Windows update. A sequence that was paused stays paused." />
+                                        </StackPanel>
+                                        <TextBlock Margin="23,2,0,0" Foreground="{StaticResource OP_Accent}" Style="{StaticResource OP_Hint}" Text="Not available in Manual: a manual run needs you nearby, so it never starts by itself." Visibility="{Binding AutoStartBlocked, Converter={StaticResource OP_BoolVisible}}" />
+                                        <StackPanel Margin="0,12,0,0" Visibility="{Binding UsesSafety, Converter={StaticResource OP_BoolVisible}}">
                                             <WrapPanel>
-                                                <TextBlock VerticalAlignment="Center" Text="When it becomes safe, wait " />
+                                                <TextBlock VerticalAlignment="Center" Text="{Binding SafeDelayText, StringFormat=When {0}\, wait }" />
                                                 <TextBox Width="60" Text="{Binding Options.SafeDelaySeconds}" />
                                                 <TextBlock VerticalAlignment="Center" Text=" s before 1 Begin" />
                                             </WrapPanel>
-                                            <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="It must stay safe for the whole wait; if it turns unsafe, the wait starts again the next time it is safe. 0 starts at once." />
+                                            <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="{Binding SafeDelayHint}" />
                                         </StackPanel>
                                         <CheckBox Margin="0,12,0,0" IsChecked="{Binding Options.AutofocusAfterBegin}" Style="{StaticResource OP_Check}">
                                             <TextBlock Text="Autofocus before the first frame after 1 Begin, and after a weather close-up" TextWrapping="Wrap" />
@@ -1206,27 +1240,28 @@
                                         <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="This defines the night for choosing targets, and is what keeps the planner from imaging into daylight:" />
                                         <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Evening: no target starts before the Sun is below the chosen twilight, even if the target's own start time or altitude has been reached." />
                                         <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Morning: no frame starts that would end after the Sun rises above it. When no target can run any more, the night is finished and 4 End runs." />
-                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• It does not start 1 Begin: with a safety monitor 1 Begin starts when it reports safe; without one the built-in workflows wait for astronomical dusk (Wait for Time in 1 Begin)." />
-                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="• Off: the Sun is not considered; targets are limited by their own start and end settings, the horizon and the safety monitor." />
-                                        <StackPanel Margin="0,12,0,0" Visibility="{Binding WithSafety, Converter={StaticResource OP_BoolVisible}}">
-                                            <TextBlock Margin="0,0,0,4" FontWeight="SemiBold" Text="When it turns unsafe during the night:" TextWrapping="Wrap" />
+                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="{Binding NightBeginBullet}" />
+                                        <TextBlock Margin="10,2,0,0" Style="{StaticResource OP_Hint}" Text="{Binding NightOffBullet}" />
+                                        <StackPanel Margin="0,12,0,0" Visibility="{Binding UsesSafety, Converter={StaticResource OP_BoolVisible}}">
+                                            <TextBlock Margin="0,0,0,4" FontWeight="SemiBold" Text="{Binding UnsafeTitle}" TextWrapping="Wrap" />
                                             <RadioButton GroupName="OP_Unsafe" IsChecked="{Binding Options.UnsafeAction, Converter={StaticResource OP_EnumBool}, ConverterParameter=RunEnd}" Style="{StaticResource OP_Radio}">
                                                 <TextBlock Text="Run 4 End (full shutdown: warm the camera, power off)" TextWrapping="Wrap" />
                                             </RadioButton>
                                             <RadioButton GroupName="OP_Unsafe" IsChecked="{Binding Options.UnsafeAction, Converter={StaticResource OP_EnumBool}, ConverterParameter=CloseUpAndWait}" Style="{StaticResource OP_Radio}">
-                                                <TextBlock Text="Close up and wait: stop guiding, park, close the dome; power, connections and camera cooling stay on" TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding CloseUpChoiceText}" TextWrapping="Wrap" />
                                             </RadioButton>
                                             <StackPanel Margin="23,6,0,0" IsEnabled="{Binding CloseUpOnUnsafe}">
                                                 <WrapPanel>
-                                                    <TextBlock Margin="0,0,0,4" VerticalAlignment="Center" Text="Run 4 End if it is still unsafe after " />
+                                                    <TextBlock Margin="0,0,0,4" VerticalAlignment="Center" Text="{Binding CloseUpTimerText}" />
                                                     <TextBox Width="52" Margin="0,0,0,4" Text="{Binding Options.CloseUpMaxHours}" />
                                                     <TextBlock Margin="0,0,0,4" VerticalAlignment="Center" Text=" h, or at " />
                                                     <ComboBox Width="230" Margin="0,0,0,4" DisplayMemberPath="Label" ItemsSource="{Binding SunLimitChoices}" SelectedValue="{Binding Options.CloseUpEnd}" SelectedValuePath="Value" />
                                                     <TextBlock Margin="0,0,0,4" VerticalAlignment="Center" Text=", whichever comes first" />
                                                 </WrapPanel>
-                                                <TextBlock Margin="0,6,0,0" Style="{StaticResource OP_Hint}" Text="The close-up also ends when nothing is left to image tonight. The morning time chosen here is separate from the Night setting above. When it is safe again (after the wait after safe): open the dome, unpark, autofocus before the first frame (with the autofocus option on), then 2 Start of target. Close-up starts once 1 Begin has finished; unsafe during 1 Begin runs 4 End. If park or closing the dome fails, 4 End runs at once. Stop while closed up runs 4 End." />
+                                                <TextBlock Margin="0,6,0,0" Style="{StaticResource OP_Hint}" Text="{Binding CloseUpHint}" />
                                             </StackPanel>
                                         </StackPanel>
+                                        <TextBlock Margin="0,12,0,0" Style="{StaticResource OP_Hint}" Text="In Manual the run goes through your targets once, then 4 End runs. Nothing watches the weather." Visibility="{Binding WithoutSafety, Converter={StaticResource OP_BoolVisible}}" />
                                     </StackPanel>
                                 </Expander>
 
@@ -1296,12 +1331,15 @@
                                                 <TextBox Width="40" Text="{Binding Options.MountRecoveryTries}" />
                                                 <TextBlock VerticalAlignment="Center" Text=" times, 10 s apart" />
                                             </WrapPanel>
-                                            <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="Reconnect the mount (this starts GS Server), AutoHome with the home sensors through GS Server's API, unpark, then continue: an interrupted 1 Begin from its next step, otherwise 2 Start of target. Not during 4 End. While paused, closed up or waiting it runs when the run continues, and only if the mount is not connected." />
+                                            <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="{Binding MountRecoveryText}" />
                                             <TextBlock Margin="0,10,0,2" Text="If the recovery fails (the mount position is unknown):" TextWrapping="Wrap" />
-                                            <CheckBox Margin="0,2,0,0" IsChecked="{Binding Options.CloseRoofWhenRecoveryFails}" Style="{StaticResource OP_Check}">
-                                                <TextBlock Text="Close the dome/roof anyway when it has to close" TextWrapping="Wrap" />
-                                            </CheckBox>
-                                            <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="Off: the dome/roof is left open and a red note is shown, because the telescope may not be clear of it. The run pauses; in GS Server connect and run AutoHome, then press Start sequence." />
+                                            <StackPanel Visibility="{Binding PlannerHandlesDome, Converter={StaticResource OP_BoolVisible}}">
+                                                <CheckBox Margin="0,2,0,0" IsChecked="{Binding Options.CloseRoofWhenRecoveryFails}" Style="{StaticResource OP_Check}">
+                                                    <TextBlock Text="Close the dome/roof anyway when it has to close" TextWrapping="Wrap" />
+                                                </CheckBox>
+                                                <TextBlock Margin="23,2,0,0" Style="{StaticResource OP_Hint}" Text="Off: the dome/roof is left open and a red note is shown, because the telescope may not be clear of it. The run pauses; in GS Server connect and run AutoHome, then press Start sequence." />
+                                            </StackPanel>
+                                            <TextBlock Margin="0,2,0,0" Style="{StaticResource OP_Hint}" Text="The run pauses and a red note is shown. The planner does not close the dome in Run with dome, but the observatory may close it, and the telescope may not be clear of it. In GS Server connect and run AutoHome, then press Start sequence." Visibility="{Binding WithDome, Converter={StaticResource OP_BoolVisible}}" />
                                         </StackPanel>
                                     </StackPanel>
                                 </Expander>
@@ -1325,7 +1363,7 @@
                                                 <TextBox Width="40" Text="{Binding Options.DeviceMissingWarnMinutes}" />
                                                 <TextBlock VerticalAlignment="Center" Text=" min" />
                                             </WrapPanel>
-                                            <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="For the safety monitor, switch, dome and weather (see Devices that stay connected): e.g. when their Alpaca server stops answering for a while, NINA tries once and then disconnects them. While the run is waiting, closed up or paused, the planner connects them again, and right away before closing the roof, opening it again or running 4 End. A missing safety monitor always counts as unsafe. While the planner is stopped nothing is reconnected; the panel only shows what is not connected." />
+                                            <TextBlock Margin="0,4,0,0" Style="{StaticResource OP_Hint}" Text="{Binding DeviceRecoveryText}" />
                                         </StackPanel>
                                     </StackPanel>
                                 </Expander>
@@ -1517,7 +1555,7 @@
                                     <StackPanel>
                                         <TextBlock Style="{StaticResource OP_InfoText}" Text="The Observatory Planner runs your observatory on its own, SGP style. You keep a list of targets with their exposures here; the planner powers up and prepares the equipment, images the targets in order, and shuts everything down at dawn or when the weather turns. With a safety monitor it does this every night by itself." />
                                         <TextBlock Style="{StaticResource OP_InfoHead}" Text="First run, step by step" />
-                                        <TextBlock Style="{StaticResource OP_InfoBullet}" Text="1. Choose how you run: ⚙ Options › Run mode. &quot;Run with safety&quot; if NINA has a safety monitor (it runs every night); &quot;Run without safety&quot; if not (each Run goes through your targets once while you stay nearby)." />
+                                        <TextBlock Style="{StaticResource OP_InfoBullet}" Text="1. Choose how you run: ⚙ Options › Run mode. &quot;Run with safety&quot; if NINA has a safety monitor (it runs every night); &quot;Run with dome&quot; if the observatory runs your dome (a hosted observatory: the planner never opens or closes it, and treats the dome shutter being open as safe); &quot;Manual&quot; if you have neither (each Run goes through your targets once while you stay nearby)." />
                                         <TextBlock Style="{StaticResource OP_InfoBullet}" Text="2. Load a default workflow: open &quot;How the night runs&quot; below and press &quot;Load a default workflow…&quot;. It fills the four stages (1 Begin, 2 Start of target, 3 While imaging, 4 End) in NINA's Advanced Sequencer." />
                                         <TextBlock Style="{StaticResource OP_InfoBullet}" Text="3. Make the stages fit your equipment: Sequence tab › &quot;✎ Edit in Advanced Sequencer&quot;. Check the power switch names, the cooling temperature, the dome steps and so on. Warnings under a stage point out steps in the wrong order." />
                                         <TextBlock Style="{StaticResource OP_InfoBullet}" Text="4. Check ⚙ Options: Keep connected (the devices that must stay on, e.g. the safety monitor), the Night setting and what happens when it turns unsafe." />
@@ -1542,7 +1580,7 @@
                                             <Button Command="{Binding GoOptionsCommand}" Content="change in ⚙ Options" FontSize="12" Style="{StaticResource OP_Link}" />
                                         </WrapPanel>
                                         <WrapPanel Margin="0,10,0,6">
-                                            <StackPanel Orientation="Horizontal" Visibility="{Binding WithSafety, Converter={StaticResource OP_BoolVisible}}">
+                                            <StackPanel Orientation="Horizontal" Visibility="{Binding UsesSafety, Converter={StaticResource OP_BoolVisible}}">
                                                 <Border Margin="0,2" Padding="10,5" BorderBrush="{StaticResource OP_Muted}" BorderThickness="1" CornerRadius="6">
                                                     <TextBlock FontWeight="SemiBold" Foreground="{StaticResource OP_Muted}" Text="Wait for safe" />
                                                 </Border>
@@ -1583,7 +1621,7 @@
                                                         <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="End" />
                                                     </StackPanel>
                                                 </Border>
-                                                <TextBlock FontSize="18" Foreground="{StaticResource OP_Accent}" Style="{StaticResource OP_Arrow}" Text="↺" ToolTip="Repeats" Visibility="{Binding WithSafety, Converter={StaticResource OP_BoolVisible}}" />
+                                                <TextBlock FontSize="18" Foreground="{StaticResource OP_Accent}" Style="{StaticResource OP_Arrow}" Text="↺" ToolTip="Repeats" Visibility="{Binding UsesSafety, Converter={StaticResource OP_BoolVisible}}" />
                                             </StackPanel>
                                         </WrapPanel>
                                         <TextBlock Style="{StaticResource OP_Hint}" Text="{Binding CycleHint}" />
@@ -1648,7 +1686,7 @@
                                         <TextBlock Style="{StaticResource OP_InfoHead}" Text="The state (left)" />
                                         <TextBlock Style="{StaticResource OP_InfoBullet}" Text="• Stopped: nothing runs. Press Run forever or Run." />
                                         <TextBlock Style="{StaticResource OP_InfoBullet}" Text="• Safe / Unsafe: running with a safety monitor, and what the monitor says now. No safety data: the monitor is not connected." />
-                                        <TextBlock Style="{StaticResource OP_InfoBullet}" Text="• No safety monitor: running in &quot;Run without safety&quot;." />
+                                        <TextBlock Style="{StaticResource OP_InfoBullet}" Text="• No safety monitor: running in &quot;Manual&quot;." />
                                         <TextBlock Style="{StaticResource OP_InfoBullet}" Text="• Paused: the run is paused; everything stays powered. Press Start sequence to continue." />
                                         <TextBlock Style="{StaticResource OP_InfoBullet}" Text="• Finished: all targets are done and 4 End has run." />
                                         <TextBlock Style="{StaticResource OP_InfoHead}" Text="The buttons (right)" />
@@ -1725,7 +1763,7 @@
                                         </Border>
                                         <TextBlock Margin="0,0,0,6" FontSize="11" FontStyle="Italic" Style="{StaticResource OP_InfoText}" Text="Example: stage 1 Begin of a workflow, with a warning about a step in the wrong order." />
                                         <TextBlock Style="{StaticResource OP_InfoHead}" Text="1 Begin" />
-                                        <TextBlock Style="{StaticResource OP_InfoText}" Text="Powers up and prepares: switches on, connects the equipment, cools the camera, opens the dome, unparks. With safety it runs each evening and after every weather shutdown; without safety once at the start." />
+                                        <TextBlock Style="{StaticResource OP_InfoText}" Text="Powers up and prepares: switches on, connects the equipment, cools the camera, opens the dome, unparks. With safety (or Run with dome) it runs each evening and after every weather shutdown; in Manual once at the start. In Run with dome the dome steps are switched off." />
                                         <TextBlock Style="{StaticResource OP_InfoHead}" Text="2 Start of target" />
                                         <TextBlock Style="{StaticResource OP_InfoText}" Text="Runs when a target starts (and when it resumes after unsafe): slew and center, start guiding. The target's &quot;When target starts&quot; choice replaces the centering step." />
                                         <TextBlock Style="{StaticResource OP_InfoHead}" Text="3 While imaging (triggers)" />

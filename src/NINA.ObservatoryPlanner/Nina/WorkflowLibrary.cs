@@ -22,7 +22,7 @@ namespace NINA.ObservatoryPlanner.Nina {
         public static readonly string[] Names = { SafetyAndDome, NoSafetyWithDome, NoSafetyNoDome };
 
         public static readonly Dictionary<string, string> Notes = new() {
-            [SafetyAndDome] = "Unattended observatory with a dome or roll-off roof and a safety monitor. Runs every night.",
+            [SafetyAndDome] = "Unattended observatory with a dome or roll-off roof and a safety monitor (or Run with dome: its dome steps are switched off). Runs every night.",
             [NoSafetyWithDome] = "Dome or roll-off roof without a safety monitor. Starts at astronomical dusk, runs once. Stay nearby for weather.",
             [NoSafetyNoDome] = "Mount outdoors, no dome or roof and no safety monitor. Starts at astronomical dusk, runs once. Stay nearby."
         };
@@ -35,7 +35,11 @@ namespace NINA.ObservatoryPlanner.Nina {
 
         public static RunMode ModeOf(string name) => name == SafetyAndDome ? RunMode.WithSafety : RunMode.WithoutSafety;
 
-        public static string DefaultFor(RunMode mode) => mode == RunMode.WithSafety ? SafetyAndDome : NoSafetyWithDome;
+        /// <summary>Run with dome starts from the safety workflow too (1 Begin when it is safe); its dome steps are switched off.</summary>
+        public static string DefaultFor(RunMode mode) => mode == RunMode.WithoutSafety ? NoSafetyWithDome : SafetyAndDome;
+
+        /// <summary>The run mode after loading a workflow: the safety workflow keeps Run with dome (its dome steps are just switched off).</summary>
+        public static RunMode ModeAfterLoading(string name, RunMode current) => current == RunMode.WithDome && name == SafetyAndDome ? RunMode.WithDome : ModeOf(name);
 
         public static ObservatoryPlannerContainer Build(string name, PlannerService planner) {
             var f = planner.Factory;
@@ -84,7 +88,10 @@ namespace NINA.ObservatoryPlanner.Nina {
             end.Add(f.Disconnect("Guider"));
             end.Add(Off("ZWO 290 MM"));
 
-            return Assemble(planner, begin, targetStart, triggers, end);
+            var built = Assemble(planner, begin, targetStart, triggers, end);
+            // Run with dome: the observatory runs the dome, so the planner's Open and Close Dome Shutter are switched off
+            if (!planner.Options.PlannerHandlesDome) { DomeSteps.SwitchOff(built); }
+            return built;
         }
 
         /// <summary>The planner's own "AF after filter change", named like the sequencer shows it.</summary>

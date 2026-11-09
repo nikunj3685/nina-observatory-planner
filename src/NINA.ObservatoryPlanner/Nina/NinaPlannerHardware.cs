@@ -112,6 +112,11 @@ namespace NINA.ObservatoryPlanner.Nina {
         public async Task ContinueStage(StageKind kind, int done, CancellationToken token) {
             var stage = container.Stage(kind);
             if (stage == null || kind == StageKind.Triggers) { return; }
+            // Run with dome: the observatory runs the dome, so Open and Close Dome Shutter in this stage are switched off (and stay off)
+            if (!planner.Options.PlannerHandlesDome) {
+                var domeOff = await Ui.Run(() => DomeSteps.SwitchOff(stage));
+                if (domeOff.Count > 0) { planner.Log.Info($"{PlannerStageContainer.Title(kind)}: Run with dome, the observatory runs the dome: {string.Join(", ", domeOff)} switched off"); }
+            }
             await Ui.Run(() => {
                 stage.ResetAll();
                 foreach (var item in stage.GetItemsSnapshot().Take(done).Where(i => i.Status == SequenceEntityStatus.CREATED)) { item.Status = SequenceEntityStatus.FINISHED; }
@@ -183,15 +188,18 @@ namespace NINA.ObservatoryPlanner.Nina {
             _ => F.Unpark()
         };
 
+        /// <summary>The steps without the dome ones when the observatory runs the dome (Run with dome).</summary>
+        private IReadOnlyList<GapStep> ForMyDome(IReadOnlyList<GapStep> steps) => planner.Options.PlannerHandlesDome ? steps : DomeSafety.WithoutDomeSteps(steps);
+
         public async Task RunGapSteps(IReadOnlyList<GapStep> steps, CancellationToken token) {
-            foreach (var step in steps) {
+            foreach (var step in ForMyDome(steps)) {
                 planner.Log.Info($"Between targets: {step}");
                 await RunStandalone(GapItem(step), token, protect: true);
             }
         }
 
         public Task<bool> ResumeAfterGap(IReadOnlyList<GapStep> steps, CancellationToken token) =>
-            RunWeatherSteps("Between targets", steps, new HashSet<GapStep> { GapStep.OpenDome, GapStep.Unpark }, token);
+            RunWeatherSteps("Between targets", ForMyDome(steps), new HashSet<GapStep> { GapStep.OpenDome, GapStep.Unpark }, token);
 
         private bool DomeConnected() => planner.Nina.Dome.GetInfo()?.Connected == true;
 
@@ -233,16 +241,15 @@ namespace NINA.ObservatoryPlanner.Nina {
         }
 
         public Task<bool> CloseUp(CancellationToken token) {
-            var steps = new List<GapStep> { GapStep.StopGuiding, GapStep.StopTracking, GapStep.Park };
-            if (DomeConnected() && !planner.RoofMustStayOpen("Closing up for the weather")) { steps.Add(GapStep.CloseDome); }
+            // RoofMustStayOpen notes (and logs) why the dome stays open, so it is only asked when the planner would close the dome
+            var steps = DomeSafety.CloseUpSteps(planner.Options.PlannerHandlesDome, DomeConnected(),
+                roofMustStayOpen: planner.Options.PlannerHandlesDome && DomeConnected() && planner.RoofMustStayOpen("Closing up for the weather"));
             return RunWeatherSteps("Closing up for the weather", steps, new HashSet<GapStep> { GapStep.Park, GapStep.CloseDome }, token);
         }
 
         public Task<bool> Reopen(CancellationToken token) {
             planner.OnBeginStarting(); // autofocus before the first frame, as after 1 Begin
-            var steps = new List<GapStep>();
-            if (DomeConnected()) { steps.Add(GapStep.OpenDome); }
-            steps.Add(GapStep.Unpark);
+            var steps = DomeSafety.ReopenSteps(planner.Options.PlannerHandlesDome, DomeConnected());
             return RunWeatherSteps("Opening up after the weather", steps, new HashSet<GapStep> { GapStep.OpenDome, GapStep.Unpark }, token);
         }
 
@@ -344,6 +351,7 @@ namespace NINA.ObservatoryPlanner.Nina {
                     continue;
                 }
                 if (item.Status == SequenceEntityStatus.DISABLED) { left.Add(item.Name); continue; }
+                if (!planner.Options.PlannerHandlesDome && DomeSteps.IsOpenClose(item)) { left.Add(item.Name); continue; }
                 dso.Add((ISequenceItem)item.Clone());
                 added.Add(item.Name);
             }
@@ -415,13 +423,56 @@ namespace NINA.ObservatoryPlanner.Nina {
         }
     }
 
+    /// <summary>"Safe" as the run mode says: the safety monitor, or with Run with dome the dome shutter being open.</summary>
     internal class NinaSafetySource : ISafetySource {
         private readonly NinaServices nina;
-        public NinaSafetySource(NinaServices nina) { this.nina = nina; }
+        private readonly PlannerOptions options;
+        public NinaSafetySource(NinaServices nina, PlannerOptions options) { this.nina = nina; this.options = options; }
 
         public SafetyState Read() {
+            if (options.RunMode == RunMode.WithDome) {
+                var dome = nina.Dome.GetInfo();
+                return DomeSafety.Read(dome?.Connected == true, ShutterOf(dome));
+            }
             var info = nina.SafetyMonitor.GetInfo();
             return new SafetyState(info?.Connected == true, info?.IsSafe == true);
+        }
+
+        /// <summary>NINA's shutter state as the planner's own.</summary>
+        public static DomeShutter ShutterOf(NINA.Equipment.Equipment.MyDome.DomeInfo dome) => dome == null ? DomeShutter.None : dome.ShutterStatus switch {
+            ShutterState.ShutterOpen => DomeShutter.Open,
+            ShutterState.ShutterClosed => DomeShutter.Closed,
+            ShutterState.ShutterOpening => DomeShutter.Opening,
+            ShutterState.ShutterClosing => DomeShutter.Closing,
+            ShutterState.ShutterError => DomeShutter.Error,
+            _ => DomeShutter.None
+        };
+    }
+
+    /// <summary>Run with dome: the observatory runs the dome, so the stages' Open and Close Dome Shutter steps are switched off.</summary>
+    internal static class DomeSteps {
+        public static bool IsOpenClose(ISequenceItem item) => item is OpenDomeShutter or CloseDomeShutter;
+
+        /// <summary>Switches off every Open/Close Dome Shutter in the container; returns the names switched off (empty when none was on).</summary>
+        public static List<string> SwitchOff(ISequenceContainer container) {
+            var off = new List<string>();
+            foreach (var item in NinaPlannerHardware.Descendants(container).Where(IsOpenClose).ToList()) {
+                if (item.Status == SequenceEntityStatus.DISABLED) { continue; }
+                item.Status = SequenceEntityStatus.DISABLED;
+                off.Add(item.Name);
+            }
+            return off;
+        }
+
+        /// <summary>Switches them on again (the planner runs the dome again); returns the names switched on.</summary>
+        public static List<string> SwitchOn(ISequenceContainer container) {
+            var on = new List<string>();
+            foreach (var item in NinaPlannerHardware.Descendants(container).Where(IsOpenClose).ToList()) {
+                if (item.Status != SequenceEntityStatus.DISABLED) { continue; }
+                item.Status = SequenceEntityStatus.CREATED;
+                on.Add(item.Name);
+            }
+            return on;
         }
     }
 }

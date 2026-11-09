@@ -19,7 +19,11 @@ namespace NINA.ObservatoryPlanner.Core {
     }
     public enum ConstraintBy { Altitude, Time }
     public enum ExposureOrder { RotateThroughFilters, FinishEachRowFirst }
-    public enum RunMode { WithSafety, WithoutSafety }
+    /// <summary>
+    /// WithSafety: the safety monitor decides, the planner opens and closes the dome. WithoutSafety (shown as "Manual"): one run, nothing watches
+    /// the weather. WithDome: the dome shutter decides (a hosted observatory where the host runs the dome); the planner never opens or closes it.
+    /// </summary>
+    public enum RunMode { WithSafety, WithoutSafety, WithDome }
     public enum GapMountAction { KeepTracking, StopTrackingAndPark, StopTrackingAndFindHome }
     /// <summary>Twilight limits, as NINA's Dawn / Nautical Dawn / Civil Dawn / Sunrise times (and the matching dusk).</summary>
     public enum SunLimit { AstronomicalDawn, NauticalDawn, CivilDawn, Sunrise }
@@ -322,7 +326,21 @@ namespace NINA.ObservatoryPlanner.Core {
             foreach (var d in o.KeepConnected) { KeepConnected.Add(d); }
         }
 
-        /// <summary>The safety monitor is always kept connected when running with safety.</summary>
-        public bool Keeps(string device) => KeepConnected.Contains(device) || (RunMode == RunMode.WithSafety && device == "Safety Monitor");
+        /// <summary>The run loops every night and watches "safe": the safety monitor (WithSafety) or the dome shutter (WithDome).</summary>
+        public bool UsesSafety => RunMode != RunMode.WithoutSafety;
+
+        /// <summary>The planner opens, closes and parks the dome itself. False when the observatory runs the dome (WithDome).</summary>
+        public bool PlannerHandlesDome => RunMode != RunMode.WithDome;
+
+        /// <summary>Starting by itself when NINA starts only makes sense for a run that loops and watches the weather, not for Manual.</summary>
+        public bool CanAutoStart => RunMode != RunMode.WithoutSafety;
+
+        /// <summary>The device the run depends on for "safe" is always kept connected: the safety monitor with safety, the dome with the dome shutter.</summary>
+        public bool Keeps(string device) => KeepConnected.Contains(device)
+            || (RunMode == RunMode.WithSafety && device == "Safety Monitor")
+            || (RunMode == RunMode.WithDome && device == "Dome");
+
+        /// <summary>Who tells the planner it is safe, for messages ("the safety monitor", "the dome shutter").</summary>
+        public string SafetySourceName => RunMode == RunMode.WithDome ? "the dome shutter" : "the safety monitor";
     }
 }

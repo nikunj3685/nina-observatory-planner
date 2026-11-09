@@ -136,6 +136,37 @@ namespace NINA.ObservatoryPlanner.Nina {
         public string DeviceProblem { get => deviceProblem; private set => Set(ref deviceProblem, value); }
         internal void SetDeviceProblem(string text) => DeviceProblem = text;
 
+        private NinaSafetySource safetySource;
+        /// <summary>"Safe" as the run mode says: the safety monitor, or the dome shutter with Run with dome.</summary>
+        internal ISafetySource SafetySource => safetySource ??= new NinaSafetySource(Nina, Options);
+
+        /// <summary>What the engine sees now (disconnected, or the dome without a shutter status, reads as not connected).</summary>
+        public SafetyState ReadSafety() {
+            try { return SafetySource.Read(); } catch (Exception) { return new SafetyState(false, false); }
+        }
+
+        /// <summary>The dome as the panel shows it with Run with dome: connected, and the shutter state.</summary>
+        public (bool Connected, DomeShutter Shutter) DomeNow() {
+            try {
+                var info = Nina.Dome.GetInfo();
+                return (info?.Connected == true, NinaSafetySource.ShutterOf(info));
+            } catch (Exception) { return (false, DomeShutter.None); }
+        }
+
+        /// <summary>The NINA profile has a dome set up.</summary>
+        public bool DomeConfigured {
+            get {
+                try { var id = Nina.Profile.ActiveProfile.DomeSettings.Id; return !string.IsNullOrWhiteSpace(id) && id != "No_Device"; } catch (Exception) { return false; }
+            }
+        }
+
+        /// <summary>Why Run with dome can't work now (no dome in the profile, a dome with no shutter status), or empty.</summary>
+        public IReadOnlyList<string> DomeStartProblems() {
+            if (Options.RunMode != RunMode.WithDome || Nina == null) { return Array.Empty<string>(); }
+            var (connected, shutter) = DomeNow();
+            return DomeSafety.StartProblems(DomeConfigured, connected, shutter);
+        }
+
         /// <summary>Each NINA device as Connect Equipment names it, whether the profile has one set up, and whether it is connected.</summary>
         private IEnumerable<(string Device, bool Configured, Func<bool> Connected)> AllDevices() {
             var p = Nina.Profile.ActiveProfile;
@@ -303,9 +334,9 @@ namespace NINA.ObservatoryPlanner.Nina {
                         // a paused run still watches the weather, so it needs the devices that stay connected
                         await devices.Check(t => ReconnectKeptDevices(ConnectOutsideRun, t), cts.Token);
                         if (!IsPaused || IsRunning) { continue; }
-                        if (Options.RunMode == RunMode.WithSafety) {
-                            var safety = Nina.SafetyMonitor.GetInfo();
-                            if (safety?.Connected == true && !safety.IsSafe) {
+                        if (Options.UsesSafety) {
+                            var safety = ReadSafety();
+                            if (safety.Connected && !safety.IsSafe) {
                                 Log.Info("Unsafe while paused: 4 End runs; when it is safe again 1 Begin runs and the planner stays paused");
                                 await Ui.Run(() => StartRun(StartKind.WeatherWhilePaused));
                                 continue;
@@ -348,7 +379,7 @@ namespace NINA.ObservatoryPlanner.Nina {
                 StartPauseWatch();
                 return;
             }
-            if (Options.AutoStartOnLaunch && ActiveContainer != null) {
+            if (Options.AutoStartOnLaunch && Options.CanAutoStart && ActiveContainer != null) {
                 Log.Info("Starting the run because \"Start Run forever when NINA starts\" is on");
                 await Task.Delay(TimeSpan.FromSeconds(5));
                 if (!IsRunning) { await Ui.Run(() => StartRun(StartKind.Normal)); }
@@ -400,6 +431,11 @@ namespace NINA.ObservatoryPlanner.Nina {
         public async Task RunEngineAsync(ObservatoryPlannerContainer container, IProgress<ApplicationStatus> progress, CancellationToken token) {
             var start = pendingStart;
             pendingStart = StartKind.Normal;
+            // Run with dome waits for the dome shutter: without a dome in the profile it would wait for ever
+            if (Options.RunMode == RunMode.WithDome && !DomeConfigured) {
+                Log.Phase(PlannerPhase.Stopped, "Not started: " + DomeSafety.StartProblems(false, false, DomeShutter.None)[0]);
+                return;
+            }
             // a run started from NINA's own sequencer while paused continues the paused run
             if (start == StartKind.Normal && IsPaused) { start = StartKind.Resume; }
             var resumeFrom = PausePoint;
@@ -418,7 +454,7 @@ namespace NINA.ObservatoryPlanner.Nina {
             var hardware = new NinaPlannerHardware(container, this, progress);
             var e = new PlannerEngine(Options, new TargetSelector(Site, Options),
                 () => Ui.Run(() => Targets.ToList()).GetAwaiter().GetResult(),
-                hardware, new NinaSafetySource(Nina), new SystemClock(), Log);
+                hardware, SafetySource, new SystemClock(), Log);
             engine = e;
             if (start != StartKind.Normal) { Log.Info($"Run starts as: {start}"); }
             try {

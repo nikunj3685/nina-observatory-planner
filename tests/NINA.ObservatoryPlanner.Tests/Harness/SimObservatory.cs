@@ -100,7 +100,27 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
         private readonly object gate = new();
         private readonly List<SimEvent> journal = new();
 
-        public bool Powered, Connected, Cooled, DomeOpen, Parked = true, Tracking, Guiding;
+        public bool Powered, Connected, Cooled, Parked = true, Tracking, Guiding;
+
+        /// <summary>
+        /// Run with dome: the host opens and closes the dome, following the "safety" script (open = safe); the planner must never command it
+        /// (any open or close from it is journalled as VIOLATION), and its Open and Close Dome steps are switched off, as in the real workflow.
+        /// </summary>
+        public bool HostRunsDome;
+
+        /// <summary>
+        /// The dome counts as shut for the checks below. With <see cref="HostRunsDome"/> the host can close it at any instant, and the planner's
+        /// watchdog looks every 2 s (the simulator only lets it look between the 150 s pieces of a frame), so a frame or a slew that starts
+        /// within that time of the closing is the unavoidable reaction time, not a fault: only a dome that has been shut for 170 s counts.
+        /// </summary>
+        private bool DomeShut() => HostRunsDome ? safety.UnsafeFor(clock.Now, TimeSpan.FromSeconds(170)) : !DomeOpen;
+
+        private bool domeOpen;
+        /// <summary>Whether the dome is open now. With <see cref="HostRunsDome"/> it follows the script, so the host can close it at any moment.</summary>
+        public bool DomeOpen {
+            get { if (HostRunsDome) { domeOpen = safety.SafeAt(clock.Now); } return domeOpen; }
+            set { domeOpen = value; }
+        }
         public int FramesStarted, FramesCompleted, DomeCloseFailures, DomeCloseCommands;
 
         /// <summary>Called when a frame is about to start, with the number of frames started so far (to inject a pause or stop).</summary>
@@ -134,6 +154,7 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
         /// </summary>
         private bool OpenDome(bool inBegin = false) {
             Add("open dome");
+            if (HostRunsDome) { Violation("the planner opened the dome in Run with dome"); return true; }
             if (!inBegin && Fails(faults.DomeOpenFails)) { Add("open dome failed"); Take(60); return false; }
             DomeOpen = true; Take(60); return true;
         }
@@ -148,6 +169,7 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
         }
         private bool CloseDome() {
             Add("close dome");
+            if (HostRunsDome) { Violation("the planner closed the dome in Run with dome"); return true; }
             DomeCloseCommands++;
             if (DomeOpen && !Parked) { Violation("close the dome with the mount not parked"); }
             if (Fails(faults.DomeCloseFails)) { DomeCloseFailures++; Add("close dome failed"); Take(36); return false; }
@@ -184,7 +206,7 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
                     case 0: PowerOn(); break;
                     case 1: Connect(); break;
                     case 2: Cool(); break;
-                    case 3: OpenDome(inBegin: true); break;
+                    case 3: if (!HostRunsDome) { OpenDome(inBegin: true); } break; // switched off with Run with dome
                     case 4: Unpark(); break;
                 }
                 beginDone = i + 1;
@@ -198,7 +220,7 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
                 switch (i) {
                     case 0: StopGuiding(); break;
                     case 1: Park(); break;
-                    case 2: CloseDome(); break;
+                    case 2: if (!HostRunsDome) { CloseDome(); } break; // switched off with Run with dome
                     case 3: WarmCamera(); break;
                     case 4: PowerOff(); break;
                 }
@@ -207,7 +229,7 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
 
         public async Task<int> RunTarget(PlannerTarget target, Func<PlannerExposure, bool> canStartFrame, CancellationToken token) {
             Add("2 start of target", target.Name);
-            if (!DomeOpen) { Violation($"2 Start of target {target.Name} with the dome closed"); }
+            if (DomeShut()) { Violation($"2 Start of target {target.Name} with the dome closed"); }
             if (Parked) { Violation($"2 Start of target {target.Name} with the mount parked"); }
             if (!Powered || !Connected) { Violation($"2 Start of target {target.Name} unpowered or disconnected"); }
             Take(120); // slew, center
@@ -218,7 +240,7 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
 
         public Task<int> ResumeTarget(PlannerTarget target, Func<PlannerExposure, bool> canStartFrame, CancellationToken token) {
             Add("resume target", target.Name);
-            if (!DomeOpen) { Violation($"resume {target.Name} with the dome closed"); }
+            if (DomeShut()) { Violation($"resume {target.Name} with the dome closed"); }
             if (Parked) { Violation($"resume {target.Name} with the mount parked"); }
             Tracking = true; Guiding = true;
             return Image(target, canStartFrame, token);
@@ -234,7 +256,7 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
                 await clock.Look(token);
                 token.ThrowIfCancellationRequested();
                 if (!Powered || !Cooled) { Violation($"frame of {target.Name} with the camera unpowered or not cooled"); }
-                if (!DomeOpen) { Violation($"frame of {target.Name} with the dome closed"); }
+                if (DomeShut()) { Violation($"frame of {target.Name} with the dome closed"); }
                 if (Parked || !Tracking) { Violation($"frame of {target.Name} with the mount parked or not tracking"); }
                 FramesStarted++;
                 Add("frame start", $"{target.Name} {e.Filter} {e.ExposureTime:0}s");
@@ -287,19 +309,31 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
             return ok;
         }
 
+        // the same decision NinaPlannerHardware makes: which steps the close-up and the opening up have
+        /// <summary>The close-up and the opening up: false when park or a dome step failed.</summary>
+        private bool RunWeatherSteps(IEnumerable<GapStep> steps) {
+            var ok = true;
+            foreach (var step in steps) {
+                switch (step) {
+                    case GapStep.StopGuiding: StopGuiding(); break;
+                    case GapStep.StopTracking: StopTracking(); break;
+                    case GapStep.Park: ok &= Park(); break;
+                    case GapStep.CloseDome: ok &= CloseDome(); break;
+                    case GapStep.OpenDome: ok &= OpenDome(); break;
+                    case GapStep.Unpark: Unpark(); break;
+                }
+            }
+            return ok;
+        }
+
         public Task<bool> CloseUp(CancellationToken token) {
             Add("close up");
-            StopGuiding(); StopTracking();
-            var ok = Park();
-            ok &= CloseDome();
-            return Task.FromResult(ok);
+            return Task.FromResult(RunWeatherSteps(DomeSafety.CloseUpSteps(!HostRunsDome, domeConnected: true, roofMustStayOpen: false)));
         }
 
         public Task<bool> Reopen(CancellationToken token) {
             Add("reopen");
-            var ok = OpenDome();
-            Unpark();
-            return Task.FromResult(ok);
+            return Task.FromResult(RunWeatherSteps(DomeSafety.ReopenSteps(!HostRunsDome, domeConnected: true)));
         }
     }
 }
