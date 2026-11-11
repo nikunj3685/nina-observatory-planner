@@ -10,7 +10,7 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <!-- A release build gets its version from the tag (dotnet build -p:Version=1.0.0.0); FileVersion follows it -->
-    <Version>1.0.0.0</Version>
+    <Version>1.1.0.0</Version>
     <Product>Observatory Planner</Product>
     <AssemblyTitle>Observatory Planner</AssemblyTitle>
     <Description>SGP-style target planner that runs your observatory every night: starts when safe, images your targets, shuts down when unsafe and resumes.</Description>

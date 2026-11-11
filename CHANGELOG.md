@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0.0
 
 Fixes and improvements from the first test nights.
 
