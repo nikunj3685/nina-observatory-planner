@@ -14,3 +14,6 @@ debuglogs/
 .claude/speak-control.ps1
 .claude/speech.pid
 .claude/speech.cmd
+
+# local only
+handsOff/
