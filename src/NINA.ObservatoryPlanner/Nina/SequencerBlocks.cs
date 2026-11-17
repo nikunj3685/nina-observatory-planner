@@ -145,6 +145,14 @@ namespace NINA.ObservatoryPlanner.Nina {
         public override string ToString() => $"Category: {Category}, Item: {nameof(PlannerAutofocusOnFilterChange)}";
     }
 
+    /// <summary>The decision before a frame starts: it is made twice, before the preparations and again right before the exposure.</summary>
+    internal static class FrameGate {
+        public enum Decision { Go, WindowClosed, Pausing }
+
+        public static Decision Check(Func<PlannerExposure, bool> canStartFrame, PlannerExposure e, bool frameAllowed) =>
+            canStartFrame(e) ? Decision.Go : frameAllowed ? Decision.WindowClosed : Decision.Pausing;
+    }
+
     /// <summary>
     /// The exposures of one target, created while it runs. Picks the next row (finish each row / rotate),
     /// switches filter, takes the frame with NINA's Take Exposure and runs the stage 3 triggers between frames.
@@ -177,8 +185,9 @@ namespace NINA.ObservatoryPlanner.Nina {
                     token.ThrowIfCancellationRequested();
                     var e = ExposurePlanner.Next(target, last);
                     if (e == null) { break; }
-                    if (!canStartFrame(e)) {
-                        planner.Log.Info(planner.FrameAllowed
+                    var gate = FrameGate.Check(canStartFrame, e, planner.FrameAllowed);
+                    if (gate != FrameGate.Decision.Go) {
+                        planner.Log.Info(gate == FrameGate.Decision.WindowClosed
                             ? $"{target.Name}: the window closes before a {e.ExposureTime:0.#} s frame would finish"
                             : $"{target.Name}: pausing before the next frame");
                         break;
@@ -236,9 +245,13 @@ namespace NINA.ObservatoryPlanner.Nina {
                     // after the wait ran out the frame starts anyway and is not restarted for the guiding error (no endless restarts)
                     if (error != null && planner.GuidingErrorAbove() && !await WaitForGuiding(error, token)) { error = null; }
 
-                    // a pause asked for during the triggers (e.g. a dither) takes effect before the frame, not by aborting it
-                    if (!planner.FrameAllowed) {
-                        planner.Log.Info($"{target.Name}: pausing before the next frame");
+                    // a pause asked for during the triggers (e.g. a dither) takes effect before the frame, not by aborting it; the target's
+                    // window is checked again here, because the filter change, autofocus and guiding waits above can take minutes
+                    gate = FrameGate.Check(canStartFrame, e, planner.FrameAllowed);
+                    if (gate != FrameGate.Decision.Go) {
+                        planner.Log.Info(gate == FrameGate.Decision.WindowClosed
+                            ? $"{target.Name}: the window closed during the preparations for the frame; no frame is started"
+                            : $"{target.Name}: pausing before the next frame");
                         break;
                     }
                     ContinueFrameNumber(e, take);

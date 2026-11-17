@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.1.0
+
+Hardware-safety fixes from the review of the plugin-list submission.
+
+- **The dome is never closed after a failed park.** The close-up, the steps between targets and 4 End all follow one rule: when Park fails, Close Dome is skipped (the panel and log say the roof was left open and why), because the mount may not be clear of the roof. In 4 End the other steps still run (Warm Camera, power off); a Close Dome Shutter step that comes after a Park Scope step is skipped when that Park Scope fails, and a Close Dome Shutter with no Park Scope before it is skipped while an earlier park is still failed. A park that works (or a mount that reports parked) clears it. There is no "close anyway" for this case.
+- **A safety monitor that is not connected counts as unsafe while paused**, as it does during the run (and the dome with Run with dome): 4 End runs, and when it is safe again 1 Begin runs and the planner stays paused.
+- **Mount recovery obeys the weather and Stop.** Recovery (reconnect, AutoHome, unpark), whether after the mount was lost during the night or by Start sequence, is cancelled when it turns unsafe (4 End runs, nothing is unparked) or when Stop is pressed (4 End runs, then it stops). Start sequence with an unknown mount position checks the weather before it recovers anything.
+- **A cancelled AutoHome is stopped.** Stop during either wait, the 10 minute limit or an error now calls GS Server's AutoHomeStop, so the mount does not keep homing by itself.
+- **The target's window is checked again just before each frame**, after the filter change, autofocus and guiding waits, so a frame is no longer started when the window closed during the preparations.
+- Tests: the fault-injection nights now fail when the dome is closed on a mount whose park failed (before, it was only a warning), and there are new tests for each rule above.
+
 ## 1.1.0.0
 
 Fixes and improvements from the first test nights.

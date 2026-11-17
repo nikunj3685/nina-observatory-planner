@@ -131,6 +131,7 @@ namespace NINA.ObservatoryPlanner.Nina {
                 await Ui.Run(() => planner.SkipRoofIfMountUnknown(stage));
             }
             if (kind == StageKind.Begin) { planner.OnBeginStarting(); }
+            using var parkGuard = kind == StageKind.End ? new ParkGuard(stage, planner) : null;
             try {
                 await stage.Run(progress, token);
             } finally {
@@ -191,32 +192,22 @@ namespace NINA.ObservatoryPlanner.Nina {
         /// <summary>The steps without the dome ones when the observatory runs the dome (Run with dome).</summary>
         private IReadOnlyList<GapStep> ForMyDome(IReadOnlyList<GapStep> steps) => planner.Options.PlannerHandlesDome ? steps : DomeSafety.WithoutDomeSteps(steps);
 
-        public async Task RunGapSteps(IReadOnlyList<GapStep> steps, CancellationToken token) {
-            foreach (var step in ForMyDome(steps)) {
-                planner.Log.Info($"Between targets: {step}");
-                await RunStandalone(GapItem(step), token, protect: true);
-            }
-        }
+        public Task RunGapSteps(IReadOnlyList<GapStep> steps, CancellationToken token) =>
+            RunWeatherSteps("Between targets", ForMyDome(steps), new HashSet<GapStep>(), token);
 
         public Task<bool> ResumeAfterGap(IReadOnlyList<GapStep> steps, CancellationToken token) =>
             RunWeatherSteps("Between targets", ForMyDome(steps), new HashSet<GapStep> { GapStep.OpenDome, GapStep.Unpark }, token);
 
         private bool DomeConnected() => planner.Nina.Dome.GetInfo()?.Connected == true;
 
-        /// <summary>Runs the steps; false when one of <paramref name="mustWork"/> failed.</summary>
-        private async Task<bool> RunWeatherSteps(string what, IEnumerable<GapStep> steps, ISet<GapStep> mustWork, CancellationToken token) {
-            var ok = true;
-            foreach (var step in steps) {
-                planner.Log.Info($"{what}: {step}");
+        /// <summary>Runs the steps; false when one of <paramref name="mustWork"/> failed. The dome is not closed after a failed park.</summary>
+        private Task<bool> RunWeatherSteps(string what, IEnumerable<GapStep> steps, ISet<GapStep> mustWork, CancellationToken token) =>
+            ShutdownSteps.Run(what, steps, mustWork, async step => {
                 var item = GapItem(step);
                 await RunStandalone(item, token, protect: true);
-                if (mustWork.Contains(step) && item.Status != SequenceEntityStatus.FINISHED) {
-                    planner.Log.Info($"{what}: {step} failed");
-                    ok = false;
-                }
-            }
-            return ok;
-        }
+                return item.Status == SequenceEntityStatus.FINISHED;
+            }, planner.ParkFailedNow, failed => { if (failed) { planner.NoteParkFailed(); } else { planner.NoteParked(); } },
+            planner.Log.Info, () => planner.RoofMustStayOpen(what));
 
         public bool MountPositionUnknown => planner.MountPositionUnknownNow();
 
@@ -447,6 +438,40 @@ namespace NINA.ObservatoryPlanner.Nina {
             ShutterState.ShutterError => DomeShutter.Error,
             _ => DomeShutter.None
         };
+    }
+
+    /// <summary>
+    /// While 4 End runs: when a Park Scope step fails, the Close Dome Shutter steps still to run are skipped, because the mount
+    /// may not be clear of the roof. A Park Scope that works clears the failure again.
+    /// </summary>
+    internal sealed class ParkGuard : IDisposable {
+        private readonly ISequenceContainer stage;
+        private readonly PlannerService planner;
+        private readonly List<(ParkScope Park, System.ComponentModel.PropertyChangedEventHandler Handler)> watched = new();
+
+        public ParkGuard(ISequenceContainer stage, PlannerService planner) {
+            this.stage = stage;
+            this.planner = planner;
+            foreach (var park in NinaPlannerHardware.Descendants(stage).OfType<ParkScope>()) {
+                System.ComponentModel.PropertyChangedEventHandler handler = (_, e) => OnChanged(park, e.PropertyName);
+                park.PropertyChanged += handler;
+                watched.Add((park, handler));
+            }
+        }
+
+        private void OnChanged(ParkScope park, string property) {
+            if (property != nameof(ISequenceItem.Status)) { return; }
+            if (park.Status == SequenceEntityStatus.FINISHED) { planner.NoteParked(); return; }
+            if (park.Status != SequenceEntityStatus.FAILED) { return; }
+            planner.NoteParkFailed();
+            planner.Log.Info("4 End: Park Scope failed; Close Dome Shutter is skipped, the mount may not be clear of the roof");
+            planner.SkipRoofIfParkFailed(stage);
+        }
+
+        public void Dispose() {
+            foreach (var (park, handler) in watched) { park.PropertyChanged -= handler; }
+            watched.Clear();
+        }
     }
 
     /// <summary>Run with dome: the observatory runs the dome, so the stages' Open and Close Dome Shutter steps are switched off.</summary>

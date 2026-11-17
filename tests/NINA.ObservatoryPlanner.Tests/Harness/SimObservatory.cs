@@ -161,11 +161,14 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
         private void Unpark() { Add("unpark"); Parked = false; Tracking = true; Take(15); }
         private void StopGuiding() { Add("stop guiding"); Guiding = false; Take(2); }
         private void StopTracking() { Add("stop tracking"); Tracking = false; Take(1); }
+        private bool parkFailed;
+        /// <summary>The last park failed and the mount is not parked now: the dome must not be closed (what the plugin's ParkGuard and ShutdownSteps do).</summary>
+        private bool ParkFailedNow => parkFailed && !Parked;
         private bool Park() {
             Add("park");
             if (Guiding) { Violation("park while guiding"); }
-            if (Fails(faults.ParkFails)) { Add("park failed"); Take(30); return false; }
-            Parked = true; Tracking = false; Take(30); return true;
+            if (Fails(faults.ParkFails)) { Add("park failed"); parkFailed = true; Take(30); return false; }
+            Parked = true; parkFailed = false; Tracking = false; Take(30); return true;
         }
         private bool CloseDome() {
             Add("close dome");
@@ -220,7 +223,10 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
                 switch (i) {
                     case 0: StopGuiding(); break;
                     case 1: Park(); break;
-                    case 2: if (!HostRunsDome) { CloseDome(); } break; // switched off with Run with dome
+                    case 2: // switched off with Run with dome; skipped after a failed park (the plugin's ParkGuard)
+                        if (HostRunsDome) { break; }
+                        if (ParkFailedNow) { Add("close dome skipped: the park failed"); break; }
+                        CloseDome(); break;
                     case 3: WarmCamera(); break;
                     case 4: PowerOff(); break;
                 }
@@ -294,37 +300,29 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
 
         private bool Gap(IReadOnlyList<GapStep> steps) {
             Add("gap", string.Join(",", steps));
-            var ok = true;
-            foreach (var s in steps) {
-                switch (s) {
-                    case GapStep.StopGuiding: StopGuiding(); break;
-                    case GapStep.StopTracking: StopTracking(); break;
-                    case GapStep.Park: Park(); break;
-                    case GapStep.FindHome: Add("find home"); Take(60); break;
-                    case GapStep.CloseDome: CloseDome(); break;
-                    case GapStep.OpenDome: ok &= OpenDome(); break;
-                    case GapStep.Unpark: Unpark(); break;
-                }
-            }
-            return ok;
+            return RunSteps("Between targets", steps, new HashSet<GapStep> { GapStep.OpenDome });
         }
 
-        // the same decision NinaPlannerHardware makes: which steps the close-up and the opening up have
-        /// <summary>The close-up and the opening up: false when park or a dome step failed.</summary>
-        private bool RunWeatherSteps(IEnumerable<GapStep> steps) {
-            var ok = true;
-            foreach (var step in steps) {
+        /// <summary>The plugin's own step runner (Core), with the simulator's steps.</summary>
+        private bool RunSteps(string what, IEnumerable<GapStep> steps, ISet<GapStep> mustWork) =>
+            ShutdownSteps.Run(what, steps, mustWork, step => {
+                var worked = true;
                 switch (step) {
                     case GapStep.StopGuiding: StopGuiding(); break;
                     case GapStep.StopTracking: StopTracking(); break;
-                    case GapStep.Park: ok &= Park(); break;
-                    case GapStep.CloseDome: ok &= CloseDome(); break;
-                    case GapStep.OpenDome: ok &= OpenDome(); break;
+                    case GapStep.Park: worked = Park(); break;
+                    case GapStep.FindHome: Add("find home"); Take(60); break;
+                    case GapStep.CloseDome: worked = CloseDome(); break;
+                    case GapStep.OpenDome: worked = OpenDome(); break;
                     case GapStep.Unpark: Unpark(); break;
                 }
-            }
-            return ok;
-        }
+                return Task.FromResult(worked);
+            }, () => ParkFailedNow, failed => { parkFailed = failed; }, _ => { }, () => Add("close dome skipped: the park failed")).GetAwaiter().GetResult();
+
+        // the same decision NinaPlannerHardware makes: which steps the close-up and the opening up have
+        /// <summary>The close-up and the opening up: false when park or a dome step failed.</summary>
+        private bool RunWeatherSteps(IEnumerable<GapStep> steps) =>
+            RunSteps("Weather", steps, new HashSet<GapStep> { GapStep.Park, GapStep.CloseDome, GapStep.OpenDome });
 
         public Task<bool> CloseUp(CancellationToken token) {
             Add("close up");

@@ -51,12 +51,10 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
         [Test]
         public async Task Random_nights_with_hardware_faults_never_break_the_engine() {
             var runs = await RunMany(seed => ScenarioGenerator.Make(seed, faults: true, userActions: true));
-            // a failing dome or park is the hardware's fault, not the engine's: what must still hold is everything else.
-            // What the engine does about those failures is reported, not asserted (known gaps, see the warnings).
-            static bool Gap(string v) => v.Contains("close the dome with the mount not parked") || v.Contains("park while guiding");
+            // a failing dome or park is the hardware's fault, not the engine's: what must still hold is everything else, and
+            // the dome is never closed on a mount whose park failed (the roof could hit it)
+            static bool Gap(string v) => v.Contains("park while guiding");
             AssertNoViolations(runs.Select(x => (x.result, x.violations.Where(v => !Gap(v)).ToList())).ToList());
-            var closedOnUnparked = runs.Count(x => x.violations.Any(v => v.Contains("close the dome with the mount not parked")));
-            if (closedOnUnparked > 0) { Assert.Warn($"{closedOnUnparked} of {runs.Count} faulty nights closed the dome after the park had failed (the mount may not have been clear of it)"); }
         }
 
         // ---------- Run with dome: the host opens and closes the dome, the planner never does ----------
@@ -190,6 +188,23 @@ namespace NINA.ObservatoryPlanner.Tests.Harness {
             Invariants.Check(r).Should().BeEmpty();
             r.Hardware.DomeOpen.Should().BeFalse();
             r.Hardware.Powered.Should().BeFalse();
+        }
+
+        [Test]
+        public async Task A_mount_that_will_not_park_never_has_the_dome_closed_on_it() {
+            // reviewer's case: the close-up and 4 End both fail to park; closing the roof then could hit the mount
+            var s = ScenarioGenerator.Make(11);
+            s.Options.RunMode = RunMode.WithSafety;
+            s.Options.UnsafeAction = UnsafeAction.CloseUpAndWait;
+            s.Options.SafeDelaySeconds = 0;
+            s.Targets.ForEach(t => { t.Enabled = true; t.Start = new TimeConstraint(); t.End = new TimeConstraint(); });
+            s.Safety = c => new RandomSafety(c, true).At(TestData.Night(23), false);
+            s.Faults = new SimFaults { ParkFails = 1.0 };
+            var r = await ScenarioRunner.Run(s);
+
+            r.Phases.Should().Contain(p => p.message.StartsWith("4 End"), "the run still shuts down what it can");
+            r.Hardware.DomeCloseCommands.Should().Be(0, "the park failed every time, so the dome is never closed");
+            Invariants.Check(r).Where(v => !v.Contains("park while guiding")).Should().BeEmpty();
         }
 
         [Test]

@@ -305,6 +305,7 @@ namespace NINA.ObservatoryPlanner.Nina {
 
         /// <summary>Starts NINA's Advanced Sequencer, which runs the planner block in the given way.</summary>
         public void StartRun(StartKind kind) {
+            if (RunStarter != null) { RunStarter(kind); return; }
             pendingStart = kind;
             // NINA only runs instructions that have not run yet: after a pause or a stop the planner block is "finished"
             if (Workflows.CurrentRoot() is NINA.Sequencer.Container.SequenceContainer root) { root.ResetAll(); }
@@ -314,6 +315,12 @@ namespace NINA.ObservatoryPlanner.Nina {
         private void SavePauseState() {
             try { Store.SaveState(IsPaused ? PlannerState.From(PausePoint) : new PlannerState()); } catch (Exception ex) { Logger.Error(ex); }
         }
+
+        /// <summary>Tests: takes the place of NINA's Advanced Sequencer when a run is started.</summary>
+        internal Action<StartKind> RunStarter { get; set; }
+
+        /// <summary>Tests: starts the watch that looks at the weather and the mount while the run is paused.</summary>
+        internal void StartPausedWatchForTest() => StartPauseWatch();
 
         private CancellationTokenSource pauseWatch;
 
@@ -334,10 +341,13 @@ namespace NINA.ObservatoryPlanner.Nina {
                         // a paused run still watches the weather, so it needs the devices that stay connected
                         await devices.Check(t => ReconnectKeptDevices(ConnectOutsideRun, t), cts.Token);
                         if (!IsPaused || IsRunning) { continue; }
-                        if (Options.UsesSafety) {
+                        {
                             var safety = ReadSafety();
-                            if (safety.Connected && !safety.IsSafe) {
-                                Log.Info("Unsafe while paused: 4 End runs; when it is safe again 1 Begin runs and the planner stays paused");
+                            // as during the run: a safety monitor (or dome) that is not connected is not safe
+                            if (PausedSafety.MustShutDown(Options.UsesSafety, safety)) {
+                                Log.Info(safety.Connected
+                                    ? "Unsafe while paused: 4 End runs; when it is safe again 1 Begin runs and the planner stays paused"
+                                    : $"{(Options.RunMode == RunMode.WithDome ? "The dome shutter status" : "The safety monitor")} is not available while paused, which counts as unsafe: 4 End runs; when it is safe again 1 Begin runs and the planner stays paused");
                                 await Ui.Run(() => StartRun(StartKind.WeatherWhilePaused));
                                 continue;
                             }
@@ -606,8 +616,33 @@ namespace NINA.ObservatoryPlanner.Nina {
             return true;
         }
 
-        /// <summary>True (and noted) when the roof must stay open: the mount position is unknown and "close anyway" is off.</summary>
+        // ---------- park failed: the dome is not closed on a mount that is not parked ----------
+        private volatile bool parkFailed;
+
+        /// <summary>A park failed: the dome is not closed until a park works (or the mount reports that it is parked).</summary>
+        internal void NoteParkFailed() => parkFailed = true;
+
+        /// <summary>A park worked.</summary>
+        internal void NoteParked() => parkFailed = false;
+
+        /// <summary>True while the last park failed and the mount is not parked now; a mount that reports "parked" clears it.</summary>
+        internal bool ParkFailedNow() {
+            if (!parkFailed) { return false; }
+            try {
+                var scope = Nina?.Telescope?.GetInfo();
+                if (scope != null && scope.Connected && scope.AtPark) { parkFailed = false; return false; }
+            } catch (Exception) { }
+            return true;
+        }
+
+        /// <summary>True (and noted) when the roof must stay open: the park failed, or the mount position is unknown and "close anyway" is off.</summary>
         internal bool RoofMustStayOpen(string what) {
+            if (ParkFailedNow()) {
+                var parkText = $"{what}: {ShutdownSteps.RoofLeftOpen}";
+                Log.Info(parkText);
+                AddEndProblem(parkText);
+                return true;
+            }
             if (!MountPositionUnknown || Options.CloseRoofWhenRecoveryFails) { return false; }
             var text = $"{what}: the dome/roof was NOT closed, because the mount position is unknown (it may not be clear of the roof). Close it yourself, or turn on \"Close the dome/roof anyway\".";
             Log.Info(text);
@@ -617,6 +652,18 @@ namespace NINA.ObservatoryPlanner.Nina {
 
         /// <summary>4 End with the mount position unknown and "close anyway" off: its Close Dome steps are skipped (this run only).</summary>
         internal void SkipRoofIfMountUnknown(NINA.Sequencer.Container.ISequenceContainer stage) {
+            var items = NinaPlannerHardware.Descendants(stage).ToList();
+            var closes = items.Where(i => i is NINA.Sequencer.SequenceItem.Dome.CloseDomeShutter && i.Status == NINA.Core.Enum.SequenceEntityStatus.CREATED).ToList();
+            // After a failed park, a Close Dome step that a Park Scope step of this 4 End comes before waits for that park (ParkGuard skips it if it fails)
+            var skip = ParkFailedNow()
+                ? closes.Where(c => !items.Take(items.IndexOf(c)).Any(i => i is NINA.Sequencer.SequenceItem.Telescope.ParkScope && i.Status == NINA.Core.Enum.SequenceEntityStatus.CREATED)).ToList()
+                : closes;
+            if (skip.Count == 0 || !RoofMustStayOpen("4 End")) { return; }
+            foreach (var c in skip) { c.Status = NINA.Core.Enum.SequenceEntityStatus.SKIPPED; }
+        }
+
+        /// <summary>A Park Scope step in 4 End failed: its Close Dome Shutter steps still to run are skipped (this run only).</summary>
+        internal void SkipRoofIfParkFailed(NINA.Sequencer.Container.ISequenceContainer stage) {
             var closes = NinaPlannerHardware.Descendants(stage).Where(i => i is NINA.Sequencer.SequenceItem.Dome.CloseDomeShutter && i.Status == NINA.Core.Enum.SequenceEntityStatus.CREATED).ToList();
             if (closes.Count == 0 || !RoofMustStayOpen("4 End")) { return; }
             foreach (var c in closes) { c.Status = NINA.Core.Enum.SequenceEntityStatus.SKIPPED; }
