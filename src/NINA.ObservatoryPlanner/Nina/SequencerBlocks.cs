@@ -352,8 +352,8 @@ namespace NINA.ObservatoryPlanner.Nina {
                 try {
                     while (!frame.IsCancellationRequested) {
                         await Task.Delay(TimeSpan.FromSeconds(1), frame.Token);
-                        if (star?.Poll() == true) { dropped = FrameDrop.StarLost; frame.Cancel(); return; }
-                        if (error?.Poll() == true) { dropped = FrameDrop.GuidingError; frame.Cancel(); return; }
+                        if (star?.Poll() == true) { dropped = FrameDrop.StarLost; SafeCancel.Cancel(frame); return; }
+                        if (error?.Poll() == true) { dropped = FrameDrop.GuidingError; SafeCancel.Cancel(frame); return; }
                     }
                 } catch (OperationCanceledException) { }
             });
@@ -369,7 +369,7 @@ namespace NINA.ObservatoryPlanner.Nina {
                 planner.Log.Info($"{take.Name} failed: {ex.Message}");
                 return (false, FrameDrop.None);
             } finally {
-                if (!frame.IsCancellationRequested) { frame.Cancel(); }
+                if (!frame.IsCancellationRequested) { SafeCancel.Cancel(frame); }
                 try { await watcher; } catch (OperationCanceledException) { }
             }
         }

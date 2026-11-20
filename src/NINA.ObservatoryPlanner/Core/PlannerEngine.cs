@@ -226,7 +226,7 @@ namespace NINA.ObservatoryPlanner.Core {
                     waitFor = hardware.CurrentStep();
                     if (waitFor == null) { return; } // a frame: the imaging loop pauses before the next one
                 } else if (!hardware.InProtectedStep()) {
-                    interrupt.Cancel();
+                    SafeCancel.Cancel(interrupt);
                     return;
                 }
             }
@@ -243,7 +243,7 @@ namespace NINA.ObservatoryPlanner.Core {
                 lock (gate) {
                     if (pauseRequested == PauseKind.None || stopRequested || !nightActive || inEnd || waitingForTarget) { return; }
                     pauseRequested = PauseKind.Now; // the step is over: nothing more is lost by stopping now
-                    interrupt.Cancel();
+                    SafeCancel.Cancel(interrupt);
                 }
             } catch (Exception ex) {
                 log.Info($"Pause could not interrupt the running step: {ex.Message}");
@@ -259,7 +259,7 @@ namespace NINA.ObservatoryPlanner.Core {
                 if (inEnd || !nightActive || mountLostRequested) { return; }
                 mountLostRequested = true;
                 log.Info("Mount lost: interrupting for the mount recovery");
-                interrupt.Cancel();
+                SafeCancel.Cancel(interrupt);
             }
         }
 
@@ -277,7 +277,7 @@ namespace NINA.ObservatoryPlanner.Core {
             lock (gate) {
                 stopRequested = true;
                 log.Info("Stop requested: 4 End runs, then the run stops");
-                if (!inEnd) { interrupt.Cancel(); }
+                if (!inEnd) { SafeCancel.Cancel(interrupt); }
             }
         }
 
@@ -520,7 +520,7 @@ namespace NINA.ObservatoryPlanner.Core {
             if (Interrupted()) { LogRecoveryInterrupted(cause); return cause; }
             var watch = Task.Run(async () => {
                 while (!recovery.IsCancellationRequested) {
-                    if (Interrupted()) { recovery.Cancel(); return; }
+                    if (Interrupted()) { SafeCancel.Cancel(recovery); return; }
                     try { await WatchDelay(SafetyPoll, recovery.Token); } catch (OperationCanceledException) { return; }
                 }
             });
@@ -530,7 +530,7 @@ namespace NINA.ObservatoryPlanner.Core {
                 LogRecoveryInterrupted(cause);
                 return cause;
             } finally {
-                recovery.Cancel();
+                SafeCancel.Cancel(recovery);
                 try { await watch; } catch (OperationCanceledException) { }
             }
         }
@@ -692,7 +692,8 @@ namespace NINA.ObservatoryPlanner.Core {
                     if (!IsSafe() && !inEnd) {
                         unsafeHit = true;
                         log.Info(options.RunMode == RunMode.WithDome ? "The dome shutter is not open any more (not safe): interrupting" : "Unsafe: interrupting");
-                        night.Cancel();
+                        var failed = SafeCancel.Cancel(night);
+                        if (failed != null) { log.Info($"Interrupting: a device reported an error while cancelling ({failed.Message}); carrying on with the shutdown"); }
                         return;
                     }
                     try { await WatchDelay(SafetyPoll, night.Token); } catch (OperationCanceledException) { return; }
@@ -722,7 +723,7 @@ namespace NINA.ObservatoryPlanner.Core {
                     if (!await hardware.Reopen(night.Token)) {
                         log.Info("Opening up after the weather failed: 4 End runs");
                         nightActive = false;
-                        night.Cancel();
+                        SafeCancel.Cancel(night);
                         log.Phase(PlannerPhase.End, "4 End (opening up failed)");
                         await Stage(StageKind.End, token);
                         return stopRequested ? NightStopped() : NightResult.Unsafe;
@@ -793,7 +794,7 @@ namespace NINA.ObservatoryPlanner.Core {
                         }
                         resume = null;
                         if (PausePending) { return await PauseNight(); }
-                        if (stopRequested) { night.Token.ThrowIfCancellationRequested(); interruptNow.Cancel(); night.Token.ThrowIfCancellationRequested(); }
+                        if (stopRequested) { night.Token.ThrowIfCancellationRequested(); SafeCancel.Cancel(interruptNow); night.Token.ThrowIfCancellationRequested(); }
                         if (frames == 0 && !t.IsComplete && selector.IsOpenAt(t, clock.Now)) {
                             // Nothing could be imaged although the window is open (e.g. a camera error): don't retry it all night.
                             skipTonight.Add(t.Id);
@@ -840,7 +841,7 @@ namespace NINA.ObservatoryPlanner.Core {
                             gapResume = null;
                             if (!opened) { return await OpeningFailed(); }
                         }
-                        if (stopRequested) { interruptNow.Cancel(); night.Token.ThrowIfCancellationRequested(); }
+                        if (stopRequested) { SafeCancel.Cancel(interruptNow); night.Token.ThrowIfCancellationRequested(); }
                         continue;
                     }
 
@@ -848,7 +849,7 @@ namespace NINA.ObservatoryPlanner.Core {
                 }
 
                 nightActive = false;
-                night.Cancel(); // stop the watchdog: shutting down because we are done, not because of the weather
+                SafeCancel.Cancel(night); // stop the watchdog: shutting down because we are done, not because of the weather
                 log.Phase(PlannerPhase.End, guideLostStop ? "4 End (guide star lost)" : "4 End (finished)");
                 await Stage(StageKind.End, token);
                 return stopRequested ? NightStopped() : guideLostStop ? NightResult.StoppedForNight : NightResult.Finished;
@@ -868,7 +869,7 @@ namespace NINA.ObservatoryPlanner.Core {
             } finally {
                 nightActive = false;
                 waitingForTarget = false;
-                night.Cancel();
+                SafeCancel.Cancel(night);
                 try { await watchdog; } catch (OperationCanceledException) { }
             }
 
@@ -903,7 +904,7 @@ namespace NINA.ObservatoryPlanner.Core {
             async Task<NightResult> OpeningFailed() {
                 log.Info("Opening up after the wait between targets failed: 4 End runs and the run stops");
                 nightActive = false;
-                night.Cancel();
+                SafeCancel.Cancel(night);
                 log.Phase(PlannerPhase.End, "4 End (opening up failed)");
                 await Stage(StageKind.End, token);
                 log.Phase(PlannerPhase.Stopped, "Stopped: opening the dome or unparking failed after the wait between targets. 4 End has run. Fix the problem and press Run again.");

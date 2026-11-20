@@ -9,6 +9,7 @@ Hardware-safety fixes from the review of the plugin-list submission.
 - **Mount recovery obeys the weather and Stop.** Recovery (reconnect, AutoHome, unpark), whether after the mount was lost during the night or by Start sequence, is cancelled when it turns unsafe (4 End runs, nothing is unparked) or when Stop is pressed (4 End runs, then it stops). Start sequence with an unknown mount position checks the weather before it recovers anything.
 - **A cancelled AutoHome is stopped.** Stop during either wait, the 10 minute limit or an error now calls GS Server's AutoHomeStop, so the mount does not keep homing by itself.
 - **The target's window is checked again just before each frame**, after the filter change, autofocus and guiding waits, so a frame is no longer started when the window closed during the preparations.
+- **A device that errors while the run is being cancelled no longer stops the run with an error.** When the weather turned unsafe while NINA's Open Dome Shutter was running, its cancel calls the dome's AbortSlew; a roof driver without AbortSlew made that throw, which crashed the weather watchdog and ended the night with "Stopped with an error" after the observatory had shut down properly. The error is now logged and the shutdown carries on.
 - Tests: the fault-injection nights now fail when the dome is closed on a mount whose park failed (before, it was only a warning), and there are new tests for each rule above.
 
 ## 1.1.0.0

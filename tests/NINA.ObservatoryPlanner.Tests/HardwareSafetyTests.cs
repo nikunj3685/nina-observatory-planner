@@ -338,6 +338,8 @@ namespace NINA.ObservatoryPlanner.Tests {
             public volatile bool RecoveryHangs = true;
             public volatile bool RecoveryCancelled;
             public Action OnFrame;
+            /// <summary>A device that fails when the run is cancelled (a roof driver without AbortSlew, whose OpenShutter calls it on cancel).</summary>
+            public volatile bool ThrowingCancelCallback;
             public SlowRecoveryHardware(FakeClock clock) { this.clock = clock; }
             private void Add(string c) { lock (calls) { calls.Add(c); } }
             public string[] Calls { get { lock (calls) { return calls.ToArray(); } } }
@@ -360,6 +362,7 @@ namespace NINA.ObservatoryPlanner.Tests {
             }
             public async Task<int> RunTarget(PlannerTarget target, Func<PlannerExposure, bool> canStartFrame, CancellationToken token) {
                 Add($"target {target.Name}");
+                using var failOnCancel = ThrowingCancelCallback ? token.Register(() => throw new NotImplementedException("AbortSlew is not implemented on this device")) : default;
                 var frames = 0;
                 PlannerExposure last = null;
                 while (ExposurePlanner.Next(target, last) is { } e) {
@@ -417,6 +420,36 @@ namespace NINA.ObservatoryPlanner.Tests {
             hw.Calls.Should().NotContain("unpark", "no unparking and moving the mount in unsafe weather");
             engine.RequestStop();
             (await Finish(run)).Should().Be(RunOutcome.Stopped);
+        }
+
+        [Test]
+        public async Task A_device_whose_cancel_callback_throws_does_not_end_the_run_with_an_error() {
+            // Seen on the roof: the weather turned unsafe while NINA's OpenShutter was running; its cancel callback calls the dome's
+            // AbortSlew, the driver has none, Cancel() threw, the watchdog faulted, and the run stopped "with an error" after the
+            // observatory had been shut down properly.
+            var engine = Make(RunMode.WithSafety);
+            hw.ThrowingCancelCallback = true;
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var run = engine.RunAsync(cts.Token);
+            await WaitFor(() => hw.Calls.Any(c => c.StartsWith("target")), "the target to start");
+            safety.Safe = false;
+            await Task.Delay(200);
+            engine.RequestStop();
+            (await Finish(run)).Should().Be(RunOutcome.Stopped, "the failing callback is reported, not thrown");
+            hw.Calls.Should().Contain("stage 4");
+        }
+
+        [Test]
+        public void SafeCancel_cancels_and_hands_back_the_error_of_a_failing_callback() {
+            using var source = new CancellationTokenSource();
+            var other = 0;
+            using var a = source.Token.Register(() => throw new NotImplementedException("AbortSlew is not implemented on this device"));
+            using var b = source.Token.Register(() => other++);
+            var error = SafeCancel.Cancel(source);
+            source.IsCancellationRequested.Should().BeTrue();
+            other.Should().Be(1, "the other callbacks still run");
+            error.Should().BeOfType<NotImplementedException>();
+            SafeCancel.Cancel(source).Should().BeNull("a second cancel does nothing");
         }
 
         [Test]
